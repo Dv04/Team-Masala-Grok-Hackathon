@@ -1,0 +1,70 @@
+# X08: golden regression suite for the QA gate (dept 13). promptfoo (MIT), deterministic asserts only, no LLM, no key.
+# Run:  npx -y -p node@22 -p promptfoo@0.124.1 -- promptfoo eval -c qa/golden.yaml --var run=$(date +%s) --no-cache -o data/qa_golden_results.json
+# Provider: POST /api/qa/golden-check = the SAME qa.check function as /api/qa/check, called with log=False so golden cases
+# don't land in the event log / founder approval queue (and the "2nd fail on a task -> founder" rule can't leak between cases).
+description: "dev4 QA gate golden suite (known-good / known-bad outputs)"
+prompts: ["{{content}}"]
+providers:
+  - id: http
+    label: qa-gate
+    config:
+      url: http://127.0.0.1:8810/api/qa/golden-check
+      method: POST
+      headers: {Content-Type: application/json}
+      body: {dept: golden, task_id: "golden-{{id}}-{{run}}", kind: "{{kind}}", content: "{{content}}", first_contact: "{{first_contact}}"}
+      transformResponse: json
+defaultTest:
+  vars: {run: manual, first_contact: "true"}
+  options: {provider: {id: http}}
+tests:
+  # ---- known-good: must pass
+  - description: clean customer reply passes
+    vars: {id: g01, kind: customer_reply, content: "Hi Sam, thanks for reaching out! Your order shipped today and should arrive Thursday."}
+    assert: [{type: javascript, value: "output.verdict === 'pass'"}, {type: javascript, value: "output.score >= 0.7"}]
+  - description: follow-up email (first_contact false) passes
+    vars: {id: g02, kind: outbound_email, first_contact: "false", content: "Following up on our chat last week, here is the onboarding link you asked for."}
+    assert: [{type: javascript, value: "output.verdict === 'pass'"}]
+  - description: clean public post passes
+    vars: {id: g03, kind: public_post, content: "Meet Masala Coffee: small-batch roasts delivered every two weeks. Launching this week."}
+    assert: [{type: javascript, value: "output.verdict === 'pass'"}]
+  - description: valid internal JSON passes
+    vars: {id: g04, kind: internal, content: '{"task": "re-run design", "dept": "design"}'}
+    assert: [{type: javascript, value: "output.verdict === 'pass'"}, {type: javascript, value: "output.check_results.json === 'pass'"}]
+  # ---- known-bad: must fail (hard rules)
+  - description: card number fails
+    vars: {id: b01, kind: customer_reply, content: "Sure, your card 4111 1111 1111 1111 is on file."}
+    assert: [{type: javascript, value: "output.verdict === 'fail'"}, {type: javascript, value: "output.reasons.join(' ').includes('card')"}]
+  - description: SSN fails
+    vars: {id: b02, kind: customer_reply, content: "Your SSN 123-45-6789 is verified."}
+    assert: [{type: javascript, value: "output.verdict === 'fail'"}]
+  - description: empty content fails
+    vars: {id: b03, kind: customer_reply, content: ""}
+    assert: [{type: javascript, value: "output.verdict === 'fail'"}, {type: javascript, value: "output.check_results.nonempty !== 'pass'"}]
+  - description: broken JSON fails
+    vars: {id: b04, kind: internal, content: '{"a": 1,'}
+    assert: [{type: javascript, value: "output.verdict === 'fail'"}]
+  - description: placeholder text fails
+    vars: {id: b05, kind: customer_reply, content: "Thanks for your patience! [insert signature]"}
+    assert: [{type: javascript, value: "output.verdict === 'fail'"}]
+  - description: public post with an email address fails
+    vars: {id: b06, kind: public_post, content: "New feature live today. Email me at someone@example.org"}
+    assert: [{type: javascript, value: "output.verdict === 'fail'"}, {type: javascript, value: "output.reasons.join(' ').includes('email')"}]
+  - description: public post with a phone number fails
+    vars: {id: b07, kind: public_post, content: "Call us at 512-555-0147 to order!"}
+    assert: [{type: javascript, value: "output.verdict === 'fail'"}]
+  # ---- founder-gated: must go to the founder, never auto-send
+  - description: refund kind goes to founder
+    vars: {id: f01, kind: refund, content: "We've issued a refund of $20 to your original payment method."}
+    assert: [{type: javascript, value: "output.verdict === 'founder'"}]
+  - description: first message to a new lead goes to founder
+    vars: {id: f02, kind: outbound_email, content: "Hi Jordan, saw your shop on Etsy and thought our tool could help. Open to a quick chat?"}
+    assert: [{type: javascript, value: "output.verdict === 'founder'"}]
+  - description: legal wording goes to founder
+    vars: {id: f03, kind: customer_reply, content: "We guarantee this will never happen again and will compensate you."}
+    assert: [{type: javascript, value: "output.verdict === 'founder'"}]
+  - description: discount wording goes to founder
+    vars: {id: f04, kind: customer_reply, content: "Good news, here is 20% off your next order."}
+    assert: [{type: javascript, value: "output.verdict === 'founder'"}]
+  - description: response always has the contract fields
+    vars: {id: c01, kind: customer_reply, content: "Hello!"}
+    assert: [{type: javascript, value: "typeof output === 'object' && output !== null"}, {type: javascript, value: "['verdict','score','reasons','checks'].every(k => k in output)"}]

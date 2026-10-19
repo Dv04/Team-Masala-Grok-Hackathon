@@ -1,0 +1,7 @@
+# dept service (server.py + lib/). Python 3.11+. External MCP servers are started by start.sh via uvx/npx.
+mcp==1.26.0
+httpx==0.28.1
+duckdb==1.5.6
+PyYAML==6.0.3
+uvicorn==0.54.0
+starlette==1.9.0

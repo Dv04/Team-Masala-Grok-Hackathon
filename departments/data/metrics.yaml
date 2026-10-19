@@ -1,0 +1,72 @@
+# Governed metrics (X06). Concept from Canner/WrenAI (Apache-2.0): a semantic layer of named, reviewed metrics.
+# We reimplemented the idea only (no WrenAI code). Every metric is SQL over the DuckDB `events` view of the shared log.
+# ops.ask maps a question to one of these (mock: keyword match) or, only with XAI_API_KEY, lets Grok pick one / write a
+# SELECT restricted to the events table. Answers always cite the metric name and the SQL that ran.
+version: 1
+table: events   # columns: ts, dept, task_id, parent_id, actor, status, summary, output (JSON), needs_approval, mode
+metrics:
+  pending_approvals:
+    description: Items waiting for founder approval right now (latest status needs_approval)
+    keywords: [pending, approval, approvals, waiting, queue, founder, approve]
+    sql: |
+      WITH l AS (SELECT task_id, arg_max(status, ts) AS status FROM events WHERE dept <> 'founder' GROUP BY task_id)
+      SELECT count(*) AS pending_approvals FROM l WHERE status = 'needs_approval'
+  tasks_by_dept_status:
+    description: Tasks per department by latest status
+    keywords: [tasks, status, department, dept, breakdown, per, each, workload]
+    sql: |
+      WITH l AS (SELECT dept, task_id, arg_max(status, ts) AS status FROM events WHERE dept NOT IN ('qa','founder') GROUP BY dept, task_id)
+      SELECT dept, status, count(*) AS tasks FROM l GROUP BY dept, status ORDER BY dept, status
+  avg_time_to_done_sec:
+    description: Average seconds from first event to first done, per department
+    keywords: [time, average, avg, fast, speed, duration, long, latency, done]
+    sql: |
+      WITH t AS (SELECT dept, task_id, min(ts) AS t0, min(ts) FILTER (WHERE status='done') AS t1
+                 FROM events WHERE dept NOT IN ('qa','founder') GROUP BY dept, task_id)
+      SELECT dept, count(*) AS done_tasks, round(avg(epoch(t1)-epoch(t0)),1) AS avg_sec FROM t WHERE t1 IS NOT NULL GROUP BY dept ORDER BY dept
+  failed_tasks_by_dept:
+    description: Tasks whose latest status is failed, per department
+    keywords: [failed, failure, failures, fail, fails, failing, errors, broken, most]
+    sql: |
+      WITH l AS (SELECT dept, task_id, arg_max(status, ts) AS status FROM events WHERE dept NOT IN ('qa','founder') GROUP BY dept, task_id)
+      SELECT dept, count(*) AS failed FROM l WHERE status = 'failed' GROUP BY dept ORDER BY failed DESC
+  qa_verdicts:
+    description: QA gate verdict counts (pass / fail / founder) per department checked
+    keywords: [qa, verdict, verdicts, gate, checks, quality, passed, rejected]
+    sql: |
+      SELECT json_extract_string(output,'$.for_dept') AS for_dept, json_extract_string(output,'$.verdict') AS verdict, count(*) AS n
+      FROM events WHERE dept = 'qa' GROUP BY ALL ORDER BY for_dept, verdict
+  qa_pass_rate:
+    description: Share of QA checks that passed on the first try
+    keywords: [pass, rate, percent, percentage, ratio, share]
+    sql: |
+      SELECT count(*) AS checks, round(avg(CASE WHEN json_extract_string(output,'$.verdict')='pass' THEN 1 ELSE 0 END),3) AS pass_rate
+      FROM events WHERE dept = 'qa'
+  actions_executed:
+    description: Real actions executed (outbox email, publish, ATS, task) by type and by who (auto vs founder)
+    keywords: [actions, executed, automation, automatic, auto, sent, emails, published, publish]
+    sql: |
+      SELECT json_extract_string(output,'$.action.type') AS action, json_extract_string(output,'$.action.executed_by') AS executed_by, count(*) AS n
+      FROM events WHERE status = 'done' AND json_extract_string(output,'$.action.type') IS NOT NULL GROUP BY ALL ORDER BY n DESC
+  open_tasks_by_dept:
+    description: Tasks created for departments (output.kind=task) that are still queued
+    keywords: [open, todo, inbox, assigned, created, backlog]
+    sql: |
+      WITH l AS (SELECT dept, task_id, arg_max(status, ts) AS status, bool_or(json_extract_string(output,'$.kind')='task') AS is_task
+                 FROM events GROUP BY dept, task_id)
+      SELECT dept, count(*) AS open_tasks FROM l WHERE is_task AND status = 'queued' GROUP BY dept ORDER BY open_tasks DESC
+  events_by_actor:
+    description: Events per actor (auto engine, founder, routines, dept bots), shows who does the work
+    keywords: [actor, actors, who, bot, bots, routine, routines, team]
+    sql: |
+      SELECT coalesce(actor,'(none)') AS actor, count(*) AS events FROM events GROUP BY ALL ORDER BY events DESC
+  activity_last_hour:
+    description: Events per department in the last 60 minutes
+    keywords: [recent, hour, today, activity, busy, lately, now]
+    sql: |
+      SELECT dept, count(*) AS events FROM events WHERE ts > now() - INTERVAL 60 MINUTE GROUP BY dept ORDER BY events DESC
+  mock_vs_live:
+    description: Events by mode, honest count of mock vs live output
+    keywords: [mock, live, mode, real, fake, honest]
+    sql: |
+      SELECT mode, count(*) AS events FROM events GROUP BY mode ORDER BY mode
