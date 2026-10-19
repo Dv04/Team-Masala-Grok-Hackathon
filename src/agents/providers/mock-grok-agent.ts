@@ -22,6 +22,22 @@ export class MockGrokAgent implements Agent {
       actor: this.role,
     });
 
+    if (!toolResult.ok) {
+      return {
+        ok: false,
+        output: toolResult.output,
+        usedTools: [echoTool.id],
+        error: toolResult.output,
+        message: {
+          id: createId("msg"),
+          role: "agent",
+          agentRole: this.role,
+          content: `Local mock tool ${echoTool.id} failed: ${toolResult.output}`,
+          createdAt: nowIso(),
+        },
+      };
+    }
+
     return {
       ok: true,
       output: `MOCK(${this.role}): ${toolResult.output}`,
