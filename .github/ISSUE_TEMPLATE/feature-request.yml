@@ -1,0 +1,26 @@
+name: Feature request
+description: Plan a new starter capability
+title: "[Feature]: "
+labels: [feature]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem are we solving?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Which module owner should take this?
+      placeholder: "frontend / agents / tools / qa"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+    validations:
+      required: true
