@@ -471,6 +471,61 @@ class WebhookTests(unittest.TestCase):
 
 
 class GrokClientTests(unittest.TestCase):
+    def setUp(self):
+        self._saved_base = os.environ.pop("XAI_BASE_URL", None)
+
+    def tearDown(self):
+        if self._saved_base is None:
+            os.environ.pop("XAI_BASE_URL", None)
+        else:
+            os.environ["XAI_BASE_URL"] = self._saved_base
+
+    def test_default_base_is_api_xai(self):
+        captured = {}
+
+        def transport(method, url, body=None, headers=None, timeout=15):
+            captured["url"] = url
+            return {"choices": [{"message": {"content": "{\"x_post\":\"hi\"}"}}]}
+
+        client = GrokClient(api_key="xai-test-key-not-real", model="grok-4", transport=transport)
+        self.assertEqual(client.base_url, "https://api.x.ai/v1")
+        self.assertEqual(config.XAI_BASE_URL, "https://api.x.ai/v1")
+        client.complete_json("sys", "user")
+        self.assertEqual(captured["url"], "https://api.x.ai/v1/chat/completions")
+
+    def test_xai_base_url_env_override_is_used(self):
+        os.environ["XAI_BASE_URL"] = "http://127.0.0.1:9/v1/"
+        captured = {}
+
+        def transport(method, url, body=None, headers=None, timeout=15):
+            captured["url"] = url
+            captured["headers"] = headers
+            return {"choices": [{"message": {"content": "{\"x_post\":\"hi\"}"}}]}
+
+        client = GrokClient(api_key="xai-test-key-not-real", model="grok-4", transport=transport)
+        self.assertEqual(config.XAI_BASE_URL, "http://127.0.0.1:9/v1")
+        self.assertEqual(client.base_url, "http://127.0.0.1:9/v1")
+        client.complete_json("sys", "user")
+        self.assertEqual(captured["url"], "http://127.0.0.1:9/v1/chat/completions")
+        self.assertNotIn("xai-test-key-not-real", captured["url"])
+        GrokClient(api_key="x", model="grok-4", base_url="https://api.x.ai/v1")
+        GrokClient(api_key="x", model="grok-4", base_url="http://127.0.0.1:9/v1")
+        with self.assertRaises(ValueError):
+            GrokClient(api_key="x", model="grok-4", base_url="https://example.invalid/v1")
+
+    def test_serve_port_zero_is_not_config_port(self):
+        from marketing_bot.server import serve
+
+        bot = MarketingBot(events=FakeEvents(), grok=FakeGrok())
+        httpd = serve(bot, port=0)
+        try:
+            bound = httpd.server_address[1]
+            self.assertNotEqual(bound, config.PORT)
+            self.assertGreater(bound, 0)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_request_omits_reasoning_rejected_params(self):
         captured = {}
 

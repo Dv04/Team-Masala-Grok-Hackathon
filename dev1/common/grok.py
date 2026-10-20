@@ -1,13 +1,18 @@
-"""xAI Responses API only. Host is fixed. No call is made when XAI_API_KEY is empty."""
+"""xAI Responses API only. Default host is https://api.x.ai/v1, overridable via XAI_BASE_URL for the xAI budget proxy. No call is made when XAI_API_KEY is empty."""
 import json
 import logging
+import os
 
 import httpx
 
 from .config import Settings, load_settings
 
-XAI_BASE = "https://api.x.ai/v1"
 log = logging.getLogger("grok")
+
+
+def xai_base() -> str:
+    """Default https://api.x.ai/v1, overridable via XAI_BASE_URL for the xAI budget proxy."""
+    return os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/")
 
 
 def _error_body(data, secret: str = "") -> str:
@@ -70,7 +75,7 @@ class GrokClient:
         if not self.settings.live:
             return GrokResult(text="", mode="mock", model=model, mock=True)
         payload = {"model": model, "input": prompt, "tools": tools or []}
-        url = XAI_BASE + "/responses"
+        url = xai_base() + "/responses"
         if self._sender:
             status, data = self._sender(url, payload, self.settings.xai_api_key)
         else:

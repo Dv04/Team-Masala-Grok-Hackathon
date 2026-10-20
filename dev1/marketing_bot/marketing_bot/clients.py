@@ -4,16 +4,22 @@ dev1/common/ was not on dev1 or main when this bot was written. Swap these
 for the shared client when it lands; MarketingBot only needs post_event,
 list_events, register_webhook, and qa_check.
 
-LLM calls use httpx against https://api.x.ai/v1 only. Mock when XAI_API_KEY is unset.
+LLM calls use httpx. Default host is https://api.x.ai/v1, overridable via XAI_BASE_URL for the xAI budget proxy. Mock when XAI_API_KEY is unset.
 """
 import json
+import os
 import urllib.parse
 
 import httpx
 
 # Reasoning models reject these. Never send them.
 _BANNED_BODY_KEYS = ("stop", "presence_penalty", "frequency_penalty", "presencePenalty", "frequencyPenalty")
-XAI_BASE = "https://api.x.ai/v1"
+DEFAULT_XAI_BASE = "https://api.x.ai/v1"
+
+
+def xai_base() -> str:
+    """Default https://api.x.ai/v1, overridable via XAI_BASE_URL for the xAI budget proxy."""
+    return os.environ.get("XAI_BASE_URL", DEFAULT_XAI_BASE).rstrip("/")
 
 
 class HttpError(RuntimeError):
@@ -62,16 +68,21 @@ class EventsClient:
 
 
 class GrokClient:
-    """xAI chat completions. Base URL is hard-wired to https://api.x.ai/v1. Mock when no API key."""
+    """xAI chat completions. Default host is https://api.x.ai/v1, overridable via XAI_BASE_URL for the xAI budget proxy. Mock when no API key."""
 
-    def __init__(self, api_key="", model="grok-4", base_url=XAI_BASE, transport=None):
+    def __init__(self, api_key="", model="grok-4", base_url=None, transport=None):
         if not str(model).startswith("grok-"):
             raise ValueError("model must be a grok-* model")
-        if str(base_url).rstrip("/") != XAI_BASE:
-            raise ValueError("base_url must be https://api.x.ai/v1")
+        allowed = {DEFAULT_XAI_BASE, xai_base()}
+        if base_url is None:
+            chosen = xai_base()
+        else:
+            chosen = str(base_url).rstrip("/")
+            if chosen not in allowed:
+                raise ValueError("base_url must be https://api.x.ai/v1 or XAI_BASE_URL")
         self.api_key = api_key or ""
         self.model = model
-        self.base_url = XAI_BASE
+        self.base_url = chosen
         self.transport = transport or httpx_transport
 
     @property

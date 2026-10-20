@@ -44,6 +44,40 @@ class ConfigTests(unittest.TestCase):
 
 
 class GrokTests(unittest.TestCase):
+    def setUp(self):
+        self._saved_base = os.environ.pop("XAI_BASE_URL", None)
+
+    def tearDown(self):
+        if self._saved_base is None:
+            os.environ.pop("XAI_BASE_URL", None)
+        else:
+            os.environ["XAI_BASE_URL"] = self._saved_base
+
+    def test_default_base_is_api_xai(self):
+        seen = {}
+
+        def sender(url, payload, key):
+            seen["url"] = url
+            return 200, {"output_text": "ok"}
+
+        GrokClient(_settings(xai_api_key="test-key"), sender=sender).respond("hi")
+        self.assertEqual(seen["url"], "https://api.x.ai/v1/responses")
+        self.assertNotIn("test-key", seen["url"])
+
+    def test_xai_base_url_env_override_is_used(self):
+        os.environ["XAI_BASE_URL"] = "http://127.0.0.1:9/v1/"
+        seen = {}
+
+        def sender(url, payload, key):
+            seen["url"] = url
+            seen["key"] = key
+            return 200, {"output_text": "ok"}
+
+        GrokClient(_settings(xai_api_key="test-key"), sender=sender).respond("hi")
+        self.assertEqual(seen["url"], "http://127.0.0.1:9/v1/responses")
+        self.assertEqual(seen["key"], "test-key")
+        self.assertNotIn("test-key", seen["url"])
+
     def test_mock_does_not_call_network(self):
         def sender(url, payload, key):
             raise AssertionError("mock mode must not call xAI")

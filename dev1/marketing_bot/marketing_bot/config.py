@@ -12,8 +12,19 @@ HOST = os.environ.get("MARKETING_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MARKETING_PORT", "8899"))
 POLL_SEC = float(os.environ.get("MARKETING_POLL_SEC", "2"))
 
-# Hard-wired. LLM and image calls go to xAI only.
-XAI_BASE_URL = "https://api.x.ai/v1"
+# Default https://api.x.ai/v1, overridable via XAI_BASE_URL for the xAI budget proxy.
+# Read on each access so a process started with the proxy env picks it up at call time.
+_DEFAULT_XAI_BASE = "https://api.x.ai/v1"
+
+
+def xai_base_url():
+    return os.environ.get("XAI_BASE_URL", _DEFAULT_XAI_BASE).rstrip("/")
+
+
+def __getattr__(name):
+    if name == "XAI_BASE_URL":
+        return xai_base_url()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _grok_model(env_name, default):
