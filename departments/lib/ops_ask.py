@@ -43,7 +43,7 @@ def run_sql(sql, path=None):
     con = duckdb.connect()
     try:
         con.execute(ops.view_sql(path).replace("CREATE OR REPLACE VIEW events", "CREATE OR REPLACE VIEW events_src"))
-        con.execute("CREATE TABLE events AS SELECT * FROM events_src"); con.execute("DROP VIEW events_src")
+        con.execute("CREATE TABLE events AS SELECT *, row_number() OVER () AS seq FROM events_src"); con.execute("DROP VIEW events_src")  # seq = append order (ts ties at ms)
         con.execute("SET enable_external_access = false"); con.execute("SET lock_configuration = true")
         cur = con.execute(f"SELECT * FROM ({s}) LIMIT {MAX_ROWS}")
         cols = [d[0] for d in cur.description]
@@ -55,7 +55,7 @@ def _live_plan(question, ms):
     catalog = "\n".join(f"- {n}: {m['description']}" for n, m in ms.items())
     sys_p = ("You answer questions about a company's event log. Prefer a governed metric. Reply JSON only: "
              '{"metric": "<name or null>", "sql": "<one DuckDB SELECT over table events, only if no metric fits>"}. '
-             "Table events(ts TIMESTAMPTZ, dept, task_id, parent_id, actor, status, summary, output JSON, needs_approval BOOLEAN, mode). "
+             "Table events(ts TIMESTAMPTZ, dept, task_id, parent_id, actor, status, summary, output JSON, needs_approval BOOLEAN, mode, seq BIGINT = append order). "
              f"Metrics:\n{catalog}")
     r = httpx.post(XAI_URL, headers={"Authorization": f"Bearer {key}"}, timeout=40,
                    json={"model": MODEL, "messages": [{"role": "system", "content": sys_p}, {"role": "user", "content": question}],

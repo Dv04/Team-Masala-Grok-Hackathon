@@ -32,7 +32,7 @@ Avoid 8790/8791 (box egress tunnel).
 | GET | `/api/ops/kpis` | | tasks per dept by status, pending approvals, avg time-to-done, replies sent while founder away |
 | GET | `/api/approvals?pending=true` | | `{pending:[{task_id, dept, summary, since, mode, output}]}` |
 | POST | `/api/approvals/{task_id}` | `{decision: approved\|rejected, note}` | appends approved/rejected event (same task_id, dept = originating dept, actor `founder`). 404 if not pending |
-| POST/GET | `/api/webhooks` | `{url, dept}` (`dept: "all"` = everything) | registry. approved/rejected events are POSTed (JSON event) to that dept's hooks, best effort, 5 s timeout, results in `logs/webhooks.log` |
+| POST/GET | `/api/webhooks` | `{url, dept}` (`dept: "all"` = everything) | registry. These events are POSTed (JSON event) to the hooks of the event's dept (plus `output.for_dept` for qa events) and to `all` hooks: `approved`/`rejected`; `queued` with `output.kind: "task"` (a task routed to a dept); `done` whose `output.action` is an object (an executed action). Best effort, 5 s timeout, results in `logs/webhooks.log` |
 | POST | `/api/founder/away` | `{away: true\|false}` | presence event, drives the "replies while away" KPI |
 | POST | `/api/hr/run` | `{job_text?, resumes?[], top_k?, parent_id?}` | shortlist + outreach draft, through qa.check |
 | POST | `/api/design/run` | `{brand, brief, n_posts? (<=2), caption?, parent_id?}` | logo + posts + caption, through qa.check |

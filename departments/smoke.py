@@ -11,6 +11,12 @@ RUN = "smoke-" + uuid.uuid4().hex[:6]
 results = []
 def ok(name, cond, detail=""):
     results.append((name, bool(cond))); print(f"{'PASS' if cond else 'FAIL'}  {name}  {detail}"[:400])
+skipped = []
+def skip(name, why): skipped.append(name); print(f"SKIP  {name}  ({why})")
+def up(port):  # optional uvx/npx MCP servers (start.sh); teammates may run without them
+    import socket
+    try: socket.create_connection(("127.0.0.1", port), 1).close(); return True
+    except OSError: return False
 
 got = []
 class H(BaseHTTPRequestHandler):
@@ -118,7 +124,8 @@ async def duck():
             await s.initialize()
             res = await s.call_tool("execute_query", {"sql": "SELECT dept, count(*) n FROM events GROUP BY dept ORDER BY n DESC"})
             return "".join(getattr(x, "text", "") for x in res.content)
-txt = asyncio.run(duck()); ok("DuckDB MCP execute_query over events", "qa" in txt and "hr" in txt, txt.replace("\n", " ")[:300])
+if up(8000): txt = asyncio.run(duck()); ok("DuckDB MCP execute_query over events", "qa" in txt and "hr" in txt, txt.replace("\n", " ")[:300])
+else: skip("DuckDB MCP execute_query over events", "DuckDB MCP not reachable on 127.0.0.1:8000; run ./start.sh")
 
 # 8 automation engine + chains (T12, W3). Everything below is triggered by ONE event/call; the engine does the rest.
 import http.client, glob
@@ -220,6 +227,13 @@ r = c.post("/api/ops/ask", json={"question": "how many approvals are pending?"})
 pend = len(c.get("/api/approvals").json()["pending"])
 ok("ops.ask 'pending approvals?' -> metric + SQL + number", r.get("metric") == "pending_approvals" and "SELECT" in r.get("sql", "")
    and r["rows"][0]["pending_approvals"] == pend, f"{r.get('answer')} (queue has {pend}) engine={r.get('engine')}")
+# dev2's case: needs_approval, then done carrying an OLDER client ts -> log order wins in both queue and ops.ask
+post_ev("sales", f"{RUN}-oldts", "needs_approval", "smoke: needs approval", {})
+post_ev("sales", f"{RUN}-oldts", "done", "smoke: done with older client ts", {}, ts="2020-01-01T00:00:00.000Z")
+pq = [p["task_id"] for p in c.get("/api/approvals").json()["pending"]]
+r2 = c.post("/api/ops/ask", json={"question": "how many approvals are pending?"}).json()
+ok("older-ts done clears pending in queue and ops.ask (same count)", f"{RUN}-oldts" not in pq and r2["rows"][0]["pending_approvals"] == len(pq),
+   f"{r2.get('answer')} (queue has {len(pq)})")
 ok("ops.ask labeled MOCK without XAI key", r.get("mode") == "mock" and r.get("engine", "").startswith("MOCK"), r.get("engine"))
 r = c.get("/api/ops/ask", params={"q": "which dept fails most"}).json(); ok("ops.ask GET ?q= picks failed_tasks_by_dept", r.get("metric") == "failed_tasks_by_dept", str(r.get("metric")))
 ok("GET /api/ops/metrics lists governed metrics", len(c.get("/api/ops/metrics").json()["metrics"]) >= 10)
@@ -239,7 +253,8 @@ r = c.post("/api/qa/golden-check", json={"dept": "golden", "task_id": f"{RUN}-g"
 ok("placeholder after a space fails (X08 regression)", r["verdict"] == "fail", "; ".join(r["reasons"])[:120])
 ok("golden-check does not write to the event log", not evs(task_id=f"{RUN}-g"))
 rel = c.get("/api/qa/reliability").json()
-ok("GET /api/qa/reliability has a real promptfoo result", rel.get("total") and rel.get("pass_rate") is not None,
+if not rel.get("total") and not up(3100): skip("GET /api/qa/reliability has a real promptfoo result", "no stored promptfoo run and promptfoo MCP not on :3100")
+else: ok("GET /api/qa/reliability has a real promptfoo result", rel.get("total") and rel.get("pass_rate") is not None,
    f"{rel.get('passed')}/{rel.get('total')} pass_rate={rel.get('pass_rate')} ran_at={rel.get('ran_at')}")
 
 # dashboard + files path-safety
@@ -261,5 +276,5 @@ if os.environ.get("SMOKE_RESTART", "1") == "1":
     ok("restart service -> no duplicate chain runs", before == after == 2, f"queued child runs before={before} after={after}")
 
 srv.shutdown()
-n = sum(1 for _, p in results if p); print(f"\nSMOKE {n}/{len(results)} passed (run id {RUN})")
+n = sum(1 for _, p in results if p); print(f"\nSMOKE {n}/{len(results)} passed, {len(skipped)} skipped (run id {RUN})")
 sys.exit(0 if n == len(results) else 1)

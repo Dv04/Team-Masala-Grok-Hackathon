@@ -6,16 +6,16 @@ version: 1
 table: events   # columns: ts, dept, task_id, parent_id, actor, status, summary, output (JSON), needs_approval, mode
 metrics:
   pending_approvals:
-    description: Items waiting for founder approval right now (latest status needs_approval)
+    description: Items waiting for founder approval right now (latest status needs_approval; same rule as GET /api/approvals)
     keywords: [pending, approval, approvals, waiting, queue, founder, approve]
     sql: |
-      WITH l AS (SELECT task_id, arg_max(status, ts) AS status FROM events WHERE dept <> 'founder' GROUP BY task_id)
+      WITH l AS (SELECT task_id, arg_max(status, seq) AS status FROM events WHERE dept <> 'founder' GROUP BY task_id)
       SELECT count(*) AS pending_approvals FROM l WHERE status = 'needs_approval'
   tasks_by_dept_status:
     description: Tasks per department by latest status
     keywords: [tasks, status, department, dept, breakdown, per, each, workload]
     sql: |
-      WITH l AS (SELECT dept, task_id, arg_max(status, ts) AS status FROM events WHERE dept NOT IN ('qa','founder') GROUP BY dept, task_id)
+      WITH l AS (SELECT dept, task_id, arg_max(status, seq) AS status FROM events WHERE dept NOT IN ('qa','founder') GROUP BY dept, task_id)
       SELECT dept, status, count(*) AS tasks FROM l GROUP BY dept, status ORDER BY dept, status
   avg_time_to_done_sec:
     description: Average seconds from first event to first done, per department
@@ -28,7 +28,7 @@ metrics:
     description: Tasks whose latest status is failed, per department
     keywords: [failed, failure, failures, fail, fails, failing, errors, broken, most]
     sql: |
-      WITH l AS (SELECT dept, task_id, arg_max(status, ts) AS status FROM events WHERE dept NOT IN ('qa','founder') GROUP BY dept, task_id)
+      WITH l AS (SELECT dept, task_id, arg_max(status, seq) AS status FROM events WHERE dept NOT IN ('qa','founder') GROUP BY dept, task_id)
       SELECT dept, count(*) AS failed FROM l WHERE status = 'failed' GROUP BY dept ORDER BY failed DESC
   qa_verdicts:
     description: QA gate verdict counts (pass / fail / founder) per department checked
@@ -52,7 +52,7 @@ metrics:
     description: Tasks created for departments (output.kind=task) that are still queued
     keywords: [open, todo, inbox, assigned, created, backlog]
     sql: |
-      WITH l AS (SELECT dept, task_id, arg_max(status, ts) AS status, bool_or(json_extract_string(output,'$.kind')='task') AS is_task
+      WITH l AS (SELECT dept, task_id, arg_max(status, seq) AS status, bool_or(json_extract_string(output,'$.kind')='task') AS is_task
                  FROM events GROUP BY dept, task_id)
       SELECT dept, count(*) AS open_tasks FROM l WHERE is_task AND status = 'queued' GROUP BY dept ORDER BY open_tasks DESC
   events_by_actor:
