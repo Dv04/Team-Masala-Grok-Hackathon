@@ -153,6 +153,7 @@ export async function chainLaunch(ctx: ServiceCtx, input: { parentId?: string; t
       kind: "listing_live",
       url: catalog.product.url,
       price: catalog.product.price_usd,
+      title: catalog.product.title,
       copy,
       copy_mode: copyMode,
       product: catalog.product,
@@ -180,8 +181,12 @@ export async function chainLaunch(ctx: ServiceCtx, input: { parentId?: string; t
   };
 }
 
-export async function chainSignals(ctx: ServiceCtx) {
-  const [plan, design] = await Promise.all([planIssue(ctx, {}), draftReply(ctx, { message_id: "msg_design" })]);
+export async function chainSignals(ctx: ServiceCtx, input: { timeoutMs?: number } = {}) {
+  const timeoutMs = input.timeoutMs ?? 3000;
+  const [plan, design] = await Promise.all([
+    planIssue(ctx, { timeoutMs }),
+    draftReply(ctx, { message_id: "msg_design", timeoutMs }),
+  ]);
   return {
     chain: "signals",
     plan_task_id: plan.task_id,

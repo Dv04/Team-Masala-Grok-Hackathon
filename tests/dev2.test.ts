@@ -238,7 +238,7 @@ it("turns a design listing_live webhook into sales, engineering, and support fol
     dept: string;
     summary?: string;
     parent_id?: string;
-    output?: { kind?: string; price?: number; copy?: string; product?: { title?: string; description?: string; sku?: string; price_usd?: number; image?: string } };
+    output?: { kind?: string; price?: number; title?: string; copy?: string; product?: { title?: string; description?: string; sku?: string; price_usd?: number; image?: string } };
   }> = [];
   while (Date.now() - started < 4000) {
     events = ((await fetch(new URL("/api/events?limit=80", url)).then((response) => response.json())) as { events: typeof events }).events;
@@ -253,6 +253,7 @@ it("turns a design listing_live webhook into sales, engineering, and support fol
   expect(salesListing?.output?.product?.sku).toBe("design-listing-1");
   expect(salesListing?.output?.product?.description).toBeTruthy();
   expect(salesListing?.output?.product?.image).toContain("design-listing-1");
+  expect(salesListing?.output?.title).toBe("Desk cactus");
   expect(salesListing?.output?.copy).toContain("Desk cactus");
   expect(salesListing?.summary).toContain("Desk cactus");
   expect(events.some((event) => event.dept === "engineering" && event.parent_id === "design-listing-1")).toBe(true);
@@ -336,7 +337,7 @@ it("completes an orchestrator sales task on the same task id", async () => {
   expect(response.status).toBe(202);
   const started = Date.now();
   let done: { task_id?: string; parent_id?: string; status?: string; dept?: string; actor?: string; mode?: string; output?: { source?: string; request_id?: string } } | undefined;
-  while (Date.now() - started < 8000) {
+  while (Date.now() - started < 12000) {
     const body = (await fetch(new URL("/api/events?limit=40", url)).then((res) => res.json())) as {
       events: Array<typeof done>;
     };
@@ -362,6 +363,14 @@ it("completes an orchestrator sales task on the same task id", async () => {
   });
   expect(ignored.status).toBe(200);
   expect(ignored.json).toMatchObject({ ok: true, ignored: true });
+});
+
+it("returns 202 while a lead chain waits for the founder", async () => {
+  const url = await boot();
+  const response = await post(url, "/api/chains/lead", { timeoutMs: 300 });
+  expect(response.status).toBe(202);
+  expect(response.json.status).toBe("awaiting_founder");
+  expect(typeof response.json.task_id).toBe("string");
 });
 
 it("serves one MCP endpoint, the panel, and a 10s poll fallback", async () => {

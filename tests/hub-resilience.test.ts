@@ -12,6 +12,7 @@ it("does not call an event live unless an xAI key is set", () => {
   expect(resolveEventMode({ TOOLS_MODE: "mock", XAI_API_KEY: "xai-test" })).toBe("mock");
   expect(resolveEventMode({ XAI_API_KEY: "" })).toBe("mock");
   expect(resolveEventMode({})).toBe("mock");
+  expect(resolveEventMode({ XAI_API_KEY: "sk-not-xai" })).toBe("mock");
   expect(resolveEventMode({ XAI_API_KEY: "xai-test" })).toBe("live");
 });
 

@@ -36,7 +36,7 @@ export interface InboundDecision {
   event?: DepartmentEvent;
   /** Dept that should answer. Comes from ?dept=, output.target_dept, output.for_dept, or a source dept we own. */
   target?: Dept;
-  react?: "listing" | "order" | "ack" | "store" | "orchestrator";
+  react?: "listing" | "order" | "ack" | "store" | "task" | "sales_signal";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -69,16 +69,18 @@ export function classifyInbound(raw: unknown, queryDept?: unknown): InboundDecis
     return { status: 202, event, target: qaTarget, react: "store" };
   }
   const detail = asRecord(output.detail);
-  const taskSource =
-    (typeof detail?.source === "string" ? detail.source : undefined) ??
-    (typeof output.source === "string" ? output.source : undefined) ??
-    (typeof body.source === "string" ? body.source : undefined);
   const routed =
     (isDept(output.for_dept) ? output.for_dept : undefined) ??
     (detail && isDept(detail.for_dept) ? detail.for_dept : undefined) ??
     target;
-  if (taskSource === "orchestrator" && routed) {
-    return { status: 202, event, target: routed, react: "orchestrator" };
+  if (source.status === "queued" && kind === "task" && routed) {
+    return { status: 202, event, target: routed, react: "task" };
+  }
+  if (kind === "product_created" && source.actor !== "sales-bot" && output.noted !== true) {
+    return { status: 202, event, target: "sales", react: "sales_signal" };
+  }
+  if (kind === "margin_update" && (routed === "sales" || sourceDept === "sales") && source.actor !== "sales-bot" && output.noted !== true) {
+    return { status: 202, event, target: "sales", react: "sales_signal" };
   }
   if (kind === "listing_live" && typeof output.listing_task !== "string") {
     return { status: 202, event, target: target ?? "sales", react: "listing" };

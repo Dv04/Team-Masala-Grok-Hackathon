@@ -35,7 +35,7 @@ const app = base
 const feed = new AbortController();
 if (app && base) {
   self = await listen(app.server, 0);
-  void followEventStream(base, app.hub, feed.signal);
+  void followEventStream(base, app.hub, feed.signal, (event) => app.reactStream(event));
   await registerWebhooks(base, self);
 }
 
@@ -188,7 +188,7 @@ it.skipIf(!base)("exercises every tool, chain, and Pulse handoff on the real dep
         events: Array<{ dept: string; mode?: string; parent_id?: string; status?: string }>;
       };
       for (const dept of ["sales", "support", "engineering"]) {
-        const honest = process.env.XAI_API_KEY?.trim() ? "live" : "mock";
+        const honest = process.env.XAI_API_KEY?.trim().startsWith("xai-") ? "live" : "mock";
         expect(events.events.some((event) => event.dept === dept && event.mode === honest)).toBe(true);
       }
       expect(events.events.some((event) => event.parent_id)).toBe(true);

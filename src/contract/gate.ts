@@ -3,6 +3,15 @@ import { newId } from "../ids.js";
 import type { DepartmentClient } from "./client.js";
 import type { QaResponse } from "./types.js";
 
+export class AwaitingFounder extends Error {
+  readonly taskId: string;
+  constructor(taskId: string) {
+    super("awaiting_founder");
+    this.name = "AwaitingFounder";
+    this.taskId = taskId;
+  }
+}
+
 export interface GateResult {
   sent: boolean;
   handed_off: boolean;
@@ -123,7 +132,13 @@ async function hold(
   timeoutMs: number,
   deliver: "send" | "handoff",
 ): Promise<GateResult> {
-  const decision = await options.client.waitForDecision(options.taskId, timeoutMs);
+  let decision: "approved" | "rejected";
+  try {
+    decision = await options.client.waitForDecision(options.taskId, timeoutMs);
+  } catch (error) {
+    if (error instanceof Error && /timed out/i.test(error.message)) throw new AwaitingFounder(options.taskId);
+    throw error;
+  }
   if (decision !== "approved") {
     await options.client.log({
       task_id: options.taskId,

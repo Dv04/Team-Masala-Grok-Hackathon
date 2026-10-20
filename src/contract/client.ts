@@ -32,7 +32,8 @@ export class DepartmentClient {
   }): Promise<{ event: DepartmentEvent; qa?: QaResponse; queued?: boolean }> {
     const copyMode = partial.output?.copy_mode;
     let mode = partial.mode ?? this.options.mode;
-    if (copyMode === "mock" || (mode === "live" && !process.env.XAI_API_KEY?.trim())) mode = "mock";
+    const key = process.env.XAI_API_KEY?.trim() ?? "";
+    if (copyMode === "mock" || (mode === "live" && !key.startsWith("xai-"))) mode = "mock";
     const event = {
       ts: new Date().toISOString(),
       dept: this.options.dept,
@@ -180,7 +181,12 @@ function qaVerdict(event: DepartmentEvent, taskId: string, qaRequestId?: string)
   return typeof request !== "string" || !qaRequestId || request === qaRequestId;
 }
 
-export async function followEventStream(baseUrl: string, hub: InboundHub, signal: AbortSignal): Promise<void> {
+export async function followEventStream(
+  baseUrl: string,
+  hub: InboundHub,
+  signal: AbortSignal,
+  onEvent?: (event: DepartmentEvent) => void | Promise<void>,
+): Promise<void> {
   while (!signal.aborted) {
     try {
       const response = await fetch(new URL("/api/stream", baseUrl), {
@@ -205,7 +211,13 @@ export async function followEventStream(baseUrl: string, hub: InboundHub, signal
             .join("");
           if (!data) continue;
           try {
-            hub.push(JSON.parse(data) as DepartmentEvent);
+            const event = JSON.parse(data) as DepartmentEvent;
+            hub.push(event);
+            if (event.output?.kind === "listing_live" || event.output?.kind === "order_placed" || event.output?.kind === "product_created" || event.output?.kind === "margin_update") {
+              void Promise.resolve(onEvent?.(event)).catch((error) => {
+                console.error("stream reaction failed", error instanceof Error ? error.message : error);
+              });
+            }
           } catch {
             // Comments and pings are not events.
           }
