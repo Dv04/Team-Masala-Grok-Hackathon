@@ -12,10 +12,22 @@ HOST = os.environ.get("MARKETING_HOST", "127.0.0.1")
 PORT = int(os.environ.get("MARKETING_PORT", "8899"))
 POLL_SEC = float(os.environ.get("MARKETING_POLL_SEC", "2"))
 
-XAI_BASE_URL = os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/")
-# Team default is grok-4. Override with GROK_TEXT_MODEL / GROK_FAST_MODEL.
-TEXT_MODEL = os.environ.get("GROK_TEXT_MODEL") or "grok-4"
-FAST_MODEL = os.environ.get("GROK_FAST_MODEL") or TEXT_MODEL
+# Hard-wired. LLM and image calls go to xAI only.
+XAI_BASE_URL = "https://api.x.ai/v1"
+
+
+def _grok_model(env_name, default):
+    raw = (os.environ.get(env_name) or "").strip()
+    if not raw:
+        return default
+    if not raw.startswith("grok-"):
+        raise RuntimeError(f"{env_name} must be a grok-* model")
+    return raw
+
+
+TEXT_MODEL = _grok_model("GROK_TEXT_MODEL", "grok-4")
+FAST_MODEL = _grok_model("GROK_FAST_MODEL", "grok-4")
+IMAGE_MODEL = _grok_model("GROK_IMAGE_MODEL", "grok-imagine-image-2.0")
 
 
 def api_key():

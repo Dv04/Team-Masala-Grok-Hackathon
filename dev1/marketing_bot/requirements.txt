@@ -1,2 +1,2 @@
-# Marketing bot uses the Python 3.11+ standard library only.
-# Optional: a running departments service (departments/start.sh) on DEPARTMENTS_URL.
+# xAI calls use httpx. Mock mode needs no key. Department service is optional at runtime.
+httpx==0.28.1

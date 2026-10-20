@@ -236,8 +236,12 @@ class GrokClientTests(unittest.TestCase):
         for key in _BANNED_BODY_KEYS:
             self.assertNotIn(key, captured["body"])
         self.assertEqual(captured["body"]["model"], "grok-4")
-        self.assertTrue(captured["url"].endswith("/chat/completions"))
+        self.assertEqual(captured["url"], "https://api.x.ai/v1/chat/completions")
         self.assertNotIn("stop", json.dumps(captured["body"]))
+        with self.assertRaises(ValueError):
+            GrokClient(api_key="x", model="grok-4", base_url="https://example.invalid/v1")
+        with self.assertRaises(ValueError):
+            GrokClient(api_key="x", model="not-grok")
 
     def test_mock_when_no_key(self):
         client = GrokClient(api_key="", transport=lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")))

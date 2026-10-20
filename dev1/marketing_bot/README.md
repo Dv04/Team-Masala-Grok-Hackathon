@@ -8,7 +8,7 @@ On startup the bot `POST`s `{DEPARTMENTS_URL}/api/webhooks` with `{url: http://1
 
 `listing_live` (product `{type, title, tagline, price, cost, trend}`, plus `url` and `action`) gets a `running` event immediately, then drafts: an X post and short thread, a LinkedIn post, a short blog draft, and landing copy (headline, subhead, bullets, CTA). Copy is grounded in the listing and, when present, a `trend_spotted` event `{trend, why, source: x}`. Drafts are marked `needs_qa: true` and sent through `POST /api/qa/check`. Pass logs `done`. Fail revises once and re-checks. Founder logs `needs_approval`. A listing with no assets also emits `output.kind: design_request` with `brand` and `brief`.
 
-Without `XAI_API_KEY` every draft is a labeled mock (`mode: mock`). With a key, drafts use `GROK_TEXT_MODEL` (default `grok-4`) at `https://api.x.ai/v1`. Requests omit `stop` and presence/frequency penalties.
+Without `XAI_API_KEY` every draft is a labeled mock (`mode: mock`). That is the default until a key is provided. With a key, text calls use httpx against `https://api.x.ai/v1` only. Models are `GROK_TEXT_MODEL` (default `grok-4`), `GROK_FAST_MODEL` (default `grok-4`), and `GROK_IMAGE_MODEL` (default `grok-imagine-image-2.0`). Each must be a `grok-*` model. Requests omit `stop` and presence/frequency penalties. This bot does not generate images; design requests go to the design department.
 
 ## Run
 

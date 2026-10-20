@@ -3,14 +3,17 @@
 dev1/common/ was not on dev1 or main when this bot was written. Swap these
 for the shared client when it lands; MarketingBot only needs post_event,
 list_events, register_webhook, and qa_check.
+
+LLM calls use httpx against https://api.x.ai/v1 only. Mock when XAI_API_KEY is unset.
 """
 import json
-import urllib.error
 import urllib.parse
-import urllib.request
+
+import httpx
 
 # Reasoning models reject these. Never send them.
 _BANNED_BODY_KEYS = ("stop", "presence_penalty", "frequency_penalty", "presencePenalty", "frequencyPenalty")
+XAI_BASE = "https://api.x.ai/v1"
 
 
 class HttpError(RuntimeError):
@@ -20,26 +23,23 @@ class HttpError(RuntimeError):
         self.body = body
 
 
-def urllib_transport(method, url, body=None, headers=None, timeout=15):
-    data = None if body is None else json.dumps(body).encode()
-    req = urllib.request.Request(url, data=data, method=method)
-    for k, v in (headers or {}).items():
-        req.add_header(k, v)
-    if body is not None:
-        req.add_header("content-type", "application/json")
+def httpx_transport(method, url, body=None, headers=None, timeout=15):
+    req_headers = dict(headers or {})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as res:
-            raw = res.read().decode()
-            return json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="replace")
-        raise HttpError(e.code, detail) from None
+        res = httpx.request(method, url, json=body, headers=req_headers, timeout=timeout)
+    except httpx.HTTPError as e:
+        raise HttpError(0, str(e)) from None
+    if res.status_code >= 400:
+        raise HttpError(res.status_code, res.text)
+    if not res.content:
+        return {}
+    return res.json()
 
 
 class EventsClient:
     def __init__(self, base_url, transport=None):
         self.base = base_url.rstrip("/")
-        self.transport = transport or urllib_transport
+        self.transport = transport or httpx_transport
 
     def post_event(self, ev):
         # The service sets ts. Dept-specific fields belong in output.
@@ -62,13 +62,17 @@ class EventsClient:
 
 
 class GrokClient:
-    """Chat completions against https://api.x.ai/v1. Mock when no API key."""
+    """xAI chat completions. Base URL is hard-wired to https://api.x.ai/v1. Mock when no API key."""
 
-    def __init__(self, api_key="", model="grok-4", base_url="https://api.x.ai/v1", transport=None):
+    def __init__(self, api_key="", model="grok-4", base_url=XAI_BASE, transport=None):
+        if not str(model).startswith("grok-"):
+            raise ValueError("model must be a grok-* model")
+        if str(base_url).rstrip("/") != XAI_BASE:
+            raise ValueError("base_url must be https://api.x.ai/v1")
         self.api_key = api_key or ""
         self.model = model
-        self.base_url = base_url.rstrip("/")
-        self.transport = transport or urllib_transport
+        self.base_url = XAI_BASE
+        self.transport = transport or httpx_transport
 
     @property
     def live(self):
