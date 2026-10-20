@@ -175,6 +175,29 @@ class MarketingTests(unittest.TestCase):
         kinds = [e["output"].get("kind") for e in fake.events]
         self.assertNotIn("design_request", kinds)
 
+    def test_design_listing_image_counts_as_asset(self):
+        fake = FakeEvents()
+        bot = self._bot(fake)
+        ev = listing("product-1")
+        ev["dept"] = "design"
+        ev["output"]["image_url"] = "/files/published/product-1/a.svg"
+        bot.handle_event(ev)
+        kinds = [e["output"].get("kind") for e in fake.events]
+        self.assertNotIn("design_request", kinds)
+
+    def test_echoed_listing_launches_once_per_product(self):
+        fake = FakeEvents()
+        bot = self._bot(fake)
+        design = listing("product-2")
+        design["dept"] = "design"
+        echo = {"dept": "engineering", "task_id": "englist_x", "status": "done", "actor": "engineering-bot",
+                "summary": "Engineering recorded the live listing", "mode": "live",
+                "output": {"kind": "listing_live", "url": "/x", "price": 6, "listing_task": "product-2"}}
+        self.assertIsNotNone(bot.handle_event(design))
+        self.assertIsNone(bot.handle_event(echo))
+        self.assertEqual(len(fake.qa_calls), 1)
+        self.assertTrue(all(e["task_id"].startswith("mkt-product-2") for e in fake.events))
+
     def test_trend_spotted_is_passed_to_the_drafter(self):
         fake = FakeEvents()
         seen = {}

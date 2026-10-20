@@ -497,6 +497,9 @@ class Orchestrator:
         if record["intent"] == "pulse":
             meta["expect"] = "trend_spotted"
             meta["product"] = "Pulse Studio"
+            if record.get("trend_task"):
+                # /api/pulse/start already emitted trend_spotted; research should accept it, not spot a 2nd trend.
+                meta["trend_task"] = record["trend_task"]
         if retry_of:
             meta["retry_of"] = retry_of
             meta["attempt"] = 2
