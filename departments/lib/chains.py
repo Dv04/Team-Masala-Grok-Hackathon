@@ -7,6 +7,7 @@ Chains 1+2 (hire_needed->HR, design_request->Design) are built in (lib/flows.py)
                          any other dept: routed (webhook fan-out by server) + ops 'done' routing record."""
 import json, os
 import events, auto, qa, depts
+import pulse  # Phase 2 Pulse Studio rules: pulse.trend->product, pulse.founder_approve->listing
 
 ROOT = os.environ.get("DEPT_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUNNABLE = {"hr", "design"}
@@ -67,4 +68,4 @@ auto.rule("chain.ops_task->dept", "queued task event (output.kind=task) for any 
           lambda ev: ev.get("status") == "queued" and _out(ev).get("kind") == "task", _ops_task, "chains.py")
 
 def register(mcp=None, lock=None):
-    return ["chain.needs_qa->qa", "chain.ops_task->dept"]
+    return ["chain.needs_qa->qa", "chain.ops_task->dept", "pulse.trend->product", "pulse.founder_approve->listing"]

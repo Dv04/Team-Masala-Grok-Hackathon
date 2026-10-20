@@ -45,3 +45,11 @@ parallel_groups:
   D: "after A+B+C: T12 then T13 (the must-have finish line, target 7:30 PM CT)"
   E: "post-freeze nice-to-haves needing Dhi inputs (key, domain, email provider)"
   F: "combined features, only after D; X01-X08 independent of each other, up to 3 at once"
+# Phase 2: Pulse Studio (7:12 PM CT). Worker: executor (single). All must, freeze 7:30.
+phase2_tasks[6]{id,title,dept,depends,est_min,acceptance,status}:
+  P01,"lib/pulse.py chain trend_spotted->design product_created (brand score/retry)->QA product gate->listing page + listing_live",design|qa,"[]",8,"POST /api/pulse/start -> listing_live event + data/published/<task>/index.html",done
+  P02,"QA product rules: trademark/PII/offensive fail; price outside $5-$60 or margin<30% -> founder",qa,"[P01]",3,"'Nike' trend -> QA fail, no listing",done
+  P03,"POST /api/ops/order -> data/ops/orders.jsonl (MOCK POD, Stripe test mode) + order_placed + margin_update; metrics.yaml + kpis.pulse",ops,"[P01]",4,"order -> margin_update with revenue/cost/margin_pct",done
+  P04,"data/trends/backup.json + POST /api/pulse/start + demo seed scenario pulse",all,"[P01]",2,"no trend -> backup trend used, source backup",done
+  P05,"smoke: full chain + trademark block + founder price gate; 0 FAIL; reset.sh; pack.sh",qa,"[P01,P02,P03,P04]",4,"SMOKE N/N",done
+  P06,"README + INTERFACES: endpoints + event kinds",all,"[P05]",2,"documented",done

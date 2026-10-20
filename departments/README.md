@@ -94,3 +94,42 @@ Ad-hoc SQL: DuckDB MCP on :8000, e.g. `SELECT dept, status, count(*) FROM events
 | X02 Blind screening (`blind:true`, default on for `hire_needed` chains): names, emails, phones, school names and gendered words are masked before ranking; identity is re-attached only for the outreach greeting; `output.fairness.removed` counts | `lib/hr_extras.py` `blind`, `lib/depts.py` | [Ismail-2001/agent-recruiter](https://github.com/Ismail-2001/agent-recruiter) (`vendor/agent-recruiter/COMMIT`) | MIT (`vendor/agent-recruiter/LICENSE`) | **Reimplemented** from the `BiasMitigator.mask_pii` idea (mask identity before scoring). No code copied; our regex masking goes further than the original, which only masks the name | real masking; ranking is MOCK |
 | X02 Interview kit (`output.interview_kit`: questions that verify matched skills and probe gaps, per shortlisted candidate) | `lib/hr_extras.py` `interview_kit` | same repo, `InterviewGeneratorAgent` pattern | MIT | **Reimplemented** pattern. Our own fixed question bank, no LLM | MOCK |
 | X07 openevals second judge | `lib/qa.py` (`check_results.openevals`) | langchain-ai/openevals | MIT | **Nothing copied or wired.** It's only a status label: `skipped (no XAI_API_KEY)`. It never affects the score | not active |
+
+## Phase 2: Pulse Studio (trend-to-product brand), 7:20 PM CT
+
+One trigger runs the whole chain (rules in `lib/pulse.py` + `lib/standins.py`, registered in the `lib/auto.py` engine):
+`trend_spotted` -> Design `product_created` (MOCK SVG, brand score + retry once) -> QA product gate -> `listing_live` page
+-> `POST /api/ops/order` -> `order_placed` + `margin_update`. All output is **MOCK**; payments are **Stripe test mode
+labels only** (no Stripe call, no charge); print-on-demand is a MOCK provider writing `data/ops/orders.jsonl`.
+
+| Endpoint | Body | Does |
+|---|---|---|
+| `POST /api/pulse/start` | `{trend?, why?, source? x\|backup\|manual, product_type?, price_usd?, cost_usd?, force_low_score?, backup_index?}` | Emits `trend_spotted` (dept research, actor `pulse`). No trend -> `data/trends/backup.json` (source backup) |
+| `GET /api/pulse/trends` | | Backup trends |
+| `GET /api/pulse/listings` | | live listings (newest first) + ops totals, for `/store` |
+| `GET /store` | | storefront `static/store.html` (placeholder if missing) |
+| `POST /api/ops/order` | `{task_id: <product task with listing_live>, qty 1..20}` | MOCK POD order + `order_placed` + `margin_update` (`computed_by: ops`); 404 if no listing |
+| `POST /api/demo/seed` | `{"scenario":"pulse", ...same as pulse/start}` | Pulse demo trigger (old demo without scenario) |
+| `GET /api/ops/kpis` | | now includes `pulse: {orders_count, revenue_usd, cost_usd, profit_usd, margin_pct, computed_by: ops}` |
+| `POST /api/approvals/{task}` | `{decision: approved\|rejected\|approve\|reject, note}` | both spellings accepted |
+| `POST /api/ops/ask` | `{question}` or `{q}` | new metrics: `orders_count`, `revenue_usd`, `margin_pct` |
+MCP tools: `pulse.start`, `ops.order`.
+
+QA product gate (`pulse.product_rules` + `qa.check` PII/banned rules): **fail** on trademark/IP names (Nike, Disney, Marvel,
+Apple, ... see `TRADEMARKS`), offensive keywords, PII; **founder** on price outside $5-$60 or margin < 30%; founder approve
+-> listing published (`executed_by: founder`), reject -> failed.
+
+Event kinds (output.kind): `trend_spotted` {trend, why, source}, `product_brief`, `design_regenerate`, `product_created`
+{product_type, title, tagline, price_usd, cost_usd, image, image_url, brand_score, attempts}, `product_blocked`, `listing_live`
+{product, url, action.type=listing_publish}, `order_placed` {order_id, listing_task, qty, revenue_usd, cost_usd, payment.mode=test},
+`margin_update` {computed_by ops|finance|finance-standin, margin_pct, totals}. Teammate kinds accepted as-is: `trend_accepted`,
+`legal_precheck`, `posts_drafted`, `chain_stalled` (integrations). `listing_live` is also posted to sales/engineering/marketing webhooks.
+
+Departments 7-9 (dev3): **finance**, **legal**, **integrations** (`lib/depts.py DEPARTMENTS`, dashboard v2 tiles).
+
+**Stand-ins** (`lib/standins.py`, `STANDINS=1` default, `STANDIN_WAIT=8`, `STANDIN_STALL=30`): if a teammate's dept hasn't
+emitted its step within the wait, dev4 does it, with `actor: standin-dev4`, `output.standin: true`, mode mock; any real event
+from that dept referencing the trigger task cancels it. research `trend_accepted`; legal pre-check + `qa.check` -> `legal_precheck`;
+engineering + sales `listing_live` (url); marketing 3 MOCK drafts `data/published/<task>/posts.md` (never posted); support one
+canned buyer Q&A through QA (needs_qa); finance `margin_update` on `order_placed`; integrations `chain_stalled` if no
+listing/blocked/founder step after 30s. Files: listing `/files/published/<task>/index.html`, art `/files/design-out-data/<file>`.

@@ -267,6 +267,65 @@ r = c.get("/api/demo/status")
 if r.status_code == 200: ok("GET /api/demo/status (demo module wired)", "running" in r.json(), json.dumps(r.json())[:120])
 else: print(f"SKIP  /api/demo/status -> {r.status_code} (lib/demo.py not wired into server.py yet; demo.sh uses REST fallback)")
 
+def _evkind(tid, kind): return [e for e in evs(task_id=tid) if (e.get("output") or {}).get("kind") == kind]
+# Phase 2: Pulse Studio chain (trend -> product -> QA -> listing_live -> order -> margin) + trademark block + price gate
+c.post("/api/webhooks", json={"url": "http://127.0.0.1:8899/pulse", "dept": "marketing"})
+r = c.post("/api/pulse/start", json={"force_low_score": True}).json()
+ok("pulse.start without trend uses a backup trend", r.get("ok") and r["trend"]["source"] == "backup", json.dumps(r.get("trend"))[:150])
+pt = r.get("trend_task")
+live = wait(lambda: [e for e in evs() if e.get("parent_id") == pt and (e.get("output") or {}).get("kind") == "listing_live"])
+prod = [e for e in evs() if e.get("parent_id") == pt and (e.get("output") or {}).get("kind") == "product_created"]
+po = (prod[-1]["output"] if prod else {})
+ok("trend_spotted -> design product_created (MOCK svg, price, cost)", prod and po.get("product_type") in ("sticker", "tee", "poster")
+   and po.get("image", "").endswith(".MOCK.svg") and po.get("price_usd") and po.get("cost_usd"), json.dumps({k: po.get(k) for k in ("product_type", "title", "price_usd", "cost_usd")}))
+ok("product brand score retried once after forced low score", po.get("attempts") == 2 and po.get("first_score", 1) < 0.7 <= (po.get("brand_score") or 0),
+   f"first={po.get('first_score')} final={po.get('brand_score')}")
+ok("QA pass -> listing_live event + listing page", live and c.get(live[-1]["output"]["url"]).status_code == 200
+   and "Stripe test mode" in c.get(live[-1]["output"]["url"]).text, live[-1]["output"]["url"] if live else "no listing_live")
+ok("listing_live has image_url under /files/ (served)", live and live[-1]["output"].get("image_url", "").startswith("/files/")
+   and c.get(live[-1]["output"]["image_url"]).status_code == 200, live[-1]["output"].get("image_url") if live else "")
+ok("GET /api/pulse/listings includes the new listing", ptask0 in [x["task_id"] for x in c.get("/api/pulse/listings").json()["listings"]] if (ptask0 := (live[-1]["task_id"] if live else None)) else False)
+ok("GET /store 200 text/html", c.get("/store").status_code == 200 and "text/html" in c.get("/store").headers.get("content-type", ""))
+ok("listing_live fanned out to marketing webhook", wait(lambda: [g for g in got if (g.get("output") or {}).get("kind") == "listing_live"], 6), f"{len(got)} webhook posts")
+ptask = live[-1]["task_id"] if live else "none"
+post_ev("sales", f"{RUN}-realsales", "done", "smoke: real sales bot saw the listing", {"kind": "listing_live"}, parent_id=ptask)
+k0 = c.get("/api/ops/kpis").json().get("pulse", {})
+r = c.post("/api/ops/order", json={"task_id": ptask, "qty": 2}).json()
+ok("POST /api/ops/order -> MOCK POD order, Stripe test mode", r.get("ok") and r["order"]["payment"]["mode"] == "test" and "MOCK" in r["order"]["provider"],
+   json.dumps(r.get("order", r))[:200])
+oid = r.get("order", {}).get("order_id")
+kinds = [(e.get("output") or {}).get("kind") for e in evs(task_id=oid or "x")]
+ok("order emits order_placed + margin_update (computed_by ops)", "order_placed" in kinds and "margin_update" in kinds, str(kinds))
+k1 = c.get("/api/ops/kpis").json().get("pulse", {})
+ok("KPIs pulse: orders/revenue/margin updated", k1.get("orders_count") == (k0.get("orders_count") or 0) + 1 and k1.get("margin_pct") is not None,
+   json.dumps(k1)[:200])
+r = c.get("/api/ops/ask", params={"q": "what is our revenue"}).json()
+ok("ops.ask revenue -> revenue_usd metric", r.get("metric") == "revenue_usd", str(r.get("answer")))
+ok("order on unknown listing -> 404", c.post("/api/ops/order", json={"task_id": "nope"}).status_code == 404)
+si = wait(lambda: (lambda x: x if {"research", "legal", "engineering", "marketing", "support", "finance"} <= {e["dept"] for e in x} else None)(
+    [e for e in evs() if e.get("actor") == "standin-dev4" and e.get("parent_id") in (pt, ptask, oid) and (e.get("output") or {}).get("standin") is True]), 25) or []
+ok("stand-ins (actor standin-dev4, standin:true): research, legal, engineering, marketing, support, finance", si, str(sorted({e["dept"] for e in si})))
+ok("real teammate event cancels stand-in (sales)", not [e for e in si if e["dept"] == "sales"], "sales stand-in skipped")
+mk = [e for e in si if e["dept"] == "marketing"]
+ok("marketing stand-in wrote MOCK posts.md (not posted)", mk and c.get(mk[-1]["output"]["url"]).status_code == 200 and mk[-1]["output"]["posted"] is False)
+ok("support stand-in Q&A went through QA", wait(lambda: [e for e in evs() if e["dept"] == "qa" and e.get("output", {}).get("for_dept") == "support"
+   and e["task_id"] in [x["task_id"] for x in si if x["dept"] == "support"]], 8))
+r = c.post("/api/pulse/start", json={"trend": "Disney villains night", "source": "manual"}).json(); bt = r["trend_task"]
+blk = wait(lambda: [e for e in evs() if e.get("parent_id") == bt and e["status"] == "failed"])
+ok("trademark trend -> QA fail, product blocked, no listing", blk and "trademark" in json.dumps(blk[-1]["output"])
+   and not [e for e in evs() if e.get("parent_id") == bt and (e.get("output") or {}).get("kind") == "listing_live"], blk[-1]["summary"][:120] if blk else "not blocked")
+r = c.post("/api/pulse/start", json={"trend": "Desk plant club", "product_type": "poster", "price_usd": 75}).json(); ft = r["trend_task"]
+fq = wait(lambda: [e for e in evs() if e.get("parent_id") == ft and e["dept"] == "qa" and e["status"] == "needs_approval"])
+ok("price outside $5-$60 -> founder queue", fq and fq[-1]["task_id"] in [p["task_id"] for p in c.get("/api/approvals").json()["pending"]], fq[-1]["summary"] if fq else "")
+if fq:
+    c.post(f"/api/approvals/{fq[-1]['task_id']}", json={"decision": "approve", "note": "smoke"})
+    ok("founder approve (decision 'approve') -> listing_live", wait(lambda: _evkind(fq[-1]["task_id"], "listing_live")), fq[-1]["task_id"])
+r = c.post("/api/events", json={"dept": "integrations", "task_id": f"{RUN}-stall", "status": "running", "summary": "smoke chain_stalled",
+                               "mode": "mock", "actor": "smoke", "output": {"kind": "chain_stalled", "task": ptask}})
+ok("dev3 dept events validate (integrations chain_stalled)", r.status_code == 200, r.text[:100])
+r = c.post("/api/ops/ask", json={"q": "how many approvals are pending?"}).json()
+ok("ops.ask POST accepts {q} as well as {question}", r.get("metric") == "pending_approvals", str(r.get("metric")))
+
 # idempotency on restart: no trigger re-fires (set SMOKE_RESTART=0 to skip)
 if os.environ.get("SMOKE_RESTART", "1") == "1":
     before = len([e for e in evs() if e.get("parent_id") in (f"{RUN}-hire", f"{RUN}-dreq") and e["status"] == "queued"])
