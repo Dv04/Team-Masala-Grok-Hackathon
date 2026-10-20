@@ -529,6 +529,12 @@ export function createApp(options: AppOptions): App {
         return;
       }
       hub.push(decision.event);
+      // Status and the panel read the local engine. A contract rejection must not change the 202.
+      try {
+        engine.ingest(decision.event);
+      } catch (error) {
+        if (!(error instanceof ContractError)) throw error;
+      }
       sendJson(res, 202, { ok: true, dept: decision.target ?? decision.event.dept, react: decision.react });
       void reactInbound(decision.event, decision.react, decision.target).catch((error) => {
         console.error("inbound reaction failed", error instanceof Error ? error.message : error);
