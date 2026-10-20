@@ -3,6 +3,7 @@ import path from "node:path";
 import { runCustomerGate } from "./contract/gate.js";
 import { grokText } from "./grok.js";
 import { newId } from "./ids.js";
+import { listingFromUpstream } from "./listing.js";
 import { planIssue } from "./engineering/bot.js";
 import { draftOutreach, findLeads } from "./sales/bot.js";
 import type { ServiceCtx } from "./service/types.js";
@@ -90,18 +91,40 @@ const PULSE_COPY =
 export async function chainLaunch(ctx: ServiceCtx, input: { parentId?: string; timeoutMs?: number } = {}) {
   const engineering = ctx.clientFor("engineering");
   const productId = newId("product");
+  const catalog = listingFromUpstream({
+    taskId: "pulse-studio",
+    output: {
+      url: "/pulse",
+      image_url: "/pulse",
+      price: 49,
+      product: {
+        id: "pulse-studio",
+        sku: "pulse-studio",
+        title: "Pulse Studio",
+        description: "A one-page product site for a small team.",
+        tagline: "A one-page product site",
+        product_type: "poster",
+        price_usd: 49,
+        cost_usd: 12,
+        trend: "shared inbox",
+        image: "/pulse",
+        url: "/pulse",
+      },
+    },
+  });
   await engineering.log({
     task_id: productId,
     ...(input.parentId ? { parent_id: input.parentId } : {}),
     status: "done",
-    summary: "Product created: Pulse Studio",
-    output: { kind: "product_created", product: "Pulse Studio" },
+    summary: `Product created: ${catalog.product.title}`,
+    output: { kind: "product_created", product: catalog.product },
   });
   const pageId = newId("page");
   const drafted = await grokText(
-    "Write one plain sentence describing Pulse Studio, a one-page product site for a small team. No prices, no email, no phone, no promises.",
+    `Write one plain sentence describing ${catalog.product.title}, a one-page product site for a small team. Mention ${catalog.product.title}. No prices, no email, no phone, no promises.`,
   );
-  const copy = drafted.mode === "live" ? drafted.text : drafted.text || PULSE_COPY;
+  const rawCopy = drafted.text || PULSE_COPY;
+  const copy = rawCopy.includes(catalog.product.title) ? rawCopy : `${catalog.product.title}: ${rawCopy}`;
   const copyMode = drafted.mode;
   const page = await runCustomerGate({
     client: engineering,
@@ -117,7 +140,7 @@ export async function chainLaunch(ctx: ServiceCtx, input: { parentId?: string; t
       await mkdir(dir, { recursive: true });
       const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Pulse Studio</title></head><body><main><h1>Pulse Studio</h1><p>${copy}</p><p class="mode">${copyMode === "live" ? "LIVE" : "MOCK"}</p><p><a href="/panel">Ask support a question</a></p></main></body></html>`;
       await writeFile(path.join(dir, "index.html"), html);
-      return { page: "/pulse", grok: copyMode };
+      return { page: "/pulse", grok: copyMode, copy_mode: copyMode };
     },
   });
   const listingId = newId("listing");
@@ -125,19 +148,14 @@ export async function chainLaunch(ctx: ServiceCtx, input: { parentId?: string; t
     task_id: listingId,
     parent_id: pageId,
     status: "done",
-    summary: "Pulse Studio listing is live",
+    summary: `${catalog.product.title} listing is live`,
     output: {
       kind: "listing_live",
-      url: "/pulse",
-      price: 49,
-      product: {
-        product_type: "poster",
-        title: "Pulse Studio",
-        tagline: "A one-page product site",
-        price_usd: 49,
-        cost_usd: 12,
-        trend: "shared inbox",
-      },
+      url: catalog.product.url,
+      price: catalog.product.price_usd,
+      copy,
+      copy_mode: copyMode,
+      product: catalog.product,
     },
   });
   const buyer = await draftReply(ctx, {

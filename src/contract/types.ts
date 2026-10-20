@@ -66,7 +66,7 @@ export interface OpsTask {
   id: string;
   dept: Dept;
   task_id: string;
-  source: "ops" | "inbound";
+  source: "ops" | "inbound" | "orchestrator";
   reason?: "stuck" | "failed" | "inbound";
   kind?: string;
   summary: string;

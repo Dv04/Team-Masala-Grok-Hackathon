@@ -64,6 +64,89 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export const HUB_QUEUE_LIMIT = 40;
+
+type HubJob = { url: string; body: string; attempts: number };
+
+const hubQueue: HubJob[] = [];
+let flushing = false;
+let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function hubQueueSize(): number {
+  return hubQueue.length;
+}
+
+export function resetHubQueueForTests(): void {
+  hubQueue.splice(0);
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = undefined;
+}
+
+/** POST to the departments hub. Retries with backoff, then keeps a bounded queue instead of throwing. */
+export async function postHub(url: string | URL, body: unknown, options: { timeoutMs?: number; retries?: number } = {}): Promise<Response | null> {
+  const href = String(url);
+  const payload = JSON.stringify(body);
+  try {
+    const response = await requestJson(
+      href,
+      { method: "POST", headers: { "content-type": "application/json" }, body: payload },
+      { timeoutMs: options.timeoutMs ?? 8000, retries: options.retries ?? 3 },
+    );
+    if (response.status >= 500) {
+      rememberHubPost(href, payload);
+      return response;
+    }
+    void flushHubQueue();
+    return response;
+  } catch (error) {
+    console.error(`hub POST failed; queued (${href})`, error instanceof Error ? error.message : error);
+    rememberHubPost(href, payload);
+    return null;
+  }
+}
+
+function rememberHubPost(url: string, body: string): void {
+  if (hubQueue.length >= HUB_QUEUE_LIMIT) hubQueue.shift();
+  hubQueue.push({ url, body, attempts: 0 });
+  scheduleFlush(200);
+}
+
+function scheduleFlush(ms: number): void {
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = undefined;
+    void flushHubQueue();
+  }, ms);
+  flushTimer.unref?.();
+}
+
+export async function flushHubQueue(): Promise<void> {
+  if (flushing) return;
+  flushing = true;
+  try {
+    while (hubQueue.length) {
+      const job = hubQueue[0];
+      if (!job) break;
+      try {
+        const response = await requestJson(
+          job.url,
+          { method: "POST", headers: { "content-type": "application/json" }, body: job.body },
+          { timeoutMs: 4000, retries: 1 },
+        );
+        if (response.status >= 500) throw new Error(`hub returned ${response.status}`);
+        hubQueue.shift();
+      } catch (error) {
+        job.attempts += 1;
+        console.error(`hub flush waiting (${job.url})`, error instanceof Error ? error.message : error);
+        scheduleFlush(Math.min(5000, 100 * 2 ** Math.min(job.attempts, 6)));
+        break;
+      }
+    }
+  } finally {
+    flushing = false;
+  }
+}
+
 const mirrorQueue: { url: string; body: string }[] = [];
 let mirrorTimer: ReturnType<typeof setTimeout> | undefined;
 

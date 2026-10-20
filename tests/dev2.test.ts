@@ -192,13 +192,23 @@ it("launches Pulse Studio from a product through a live listing", async () => {
   expect(launched.json.qa_passed).toBe(true);
   expect(launched.json.copy_mode).toBe("mock");
   const events = (await fetch(new URL("/api/events?limit=50", url)).then((response) => response.json())) as {
-    events: Array<{ task_id: string; parent_id?: string; output?: { kind?: string } }>;
+    events: Array<{ task_id: string; dept?: string; parent_id?: string; mode?: string; output?: { kind?: string; copy?: string; copy_mode?: string; product?: { title?: string } } }>;
   };
   const listing = events.events.find((event) => event.output?.kind === "listing_live");
   const product = events.events.find((event) => event.output?.kind === "product_created");
   expect(product?.task_id).toBe(launched.json.product_task_id);
   expect(listing?.parent_id).toBe(launched.json.page_task_id);
   expect(listing?.output?.kind).toBe("listing_live");
+  const listed = listing?.output as { copy?: string; copy_mode?: string; product?: { title?: string; description?: string; sku?: string; price_usd?: number; image?: string } };
+  expect(listed.product?.title).toBe("Pulse Studio");
+  expect(listed.product?.description).toContain("one-page");
+  expect(listed.product?.sku).toBe("pulse-studio");
+  expect(listed.product?.price_usd).toBe(49);
+  expect(listed.product?.image).toBeTruthy();
+  expect(listed.copy).toContain("Pulse Studio");
+  expect(listed.copy_mode).toBe("mock");
+  expect(events.events.find((event) => event.output?.kind === "listing_live")?.mode).toBe("mock");
+  expect(events.events.find((event) => event.output?.kind === "listing_live" && event.dept === "sales") ).toBeTruthy();
   const support = events.events.find((event) => event.task_id === launched.json.support_task_id && event.parent_id);
   expect(support?.parent_id).toBe(launched.json.listing_task_id);
   const page = await fetch(new URL("/pulse", url));
@@ -224,7 +234,12 @@ it("turns a design listing_live webhook into sales, engineering, and support fol
   });
   expect(listed.status).toBe(202);
   const started = Date.now();
-  let events: Array<{ dept: string; parent_id?: string; output?: { kind?: string; price?: number } }> = [];
+  let events: Array<{
+    dept: string;
+    summary?: string;
+    parent_id?: string;
+    output?: { kind?: string; price?: number; copy?: string; product?: { title?: string; description?: string; sku?: string; price_usd?: number; image?: string } };
+  }> = [];
   while (Date.now() - started < 4000) {
     events = ((await fetch(new URL("/api/events?limit=80", url)).then((response) => response.json())) as { events: typeof events }).events;
     const support = events.some((event) => event.dept === "support" && event.parent_id === "design-listing-1");
@@ -232,10 +247,121 @@ it("turns a design listing_live webhook into sales, engineering, and support fol
     if (support && sales) break;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  expect(events.some((event) => event.dept === "sales" && event.output?.kind === "listing_live" && event.output.price === 6)).toBe(true);
+  const salesListing = events.find((event) => event.dept === "sales" && event.output?.kind === "listing_live" && event.output.price === 6);
+  expect(salesListing?.output?.product?.title).toBe("Desk cactus");
+  expect(salesListing?.output?.product?.price_usd).toBe(6);
+  expect(salesListing?.output?.product?.sku).toBe("design-listing-1");
+  expect(salesListing?.output?.product?.description).toBeTruthy();
+  expect(salesListing?.output?.product?.image).toContain("design-listing-1");
+  expect(salesListing?.output?.copy).toContain("Desk cactus");
+  expect(salesListing?.summary).toContain("Desk cactus");
   expect(events.some((event) => event.dept === "engineering" && event.parent_id === "design-listing-1")).toBe(true);
   expect(events.some((event) => event.dept === "support" && event.parent_id === "design-listing-1")).toBe(true);
   expect(JSON.stringify(events)).not.toContain("@");
+});
+
+it("accepts a foreign source dept and answers only when the event is for us", async () => {
+  const url = await boot();
+  const finance = await post(url, "/api/webhooks/inbound", {
+    dept: "finance",
+    task_id: "fin-not-ours",
+    actor: "dev3-finance",
+    status: "needs_approval",
+    summary: "Margin under the floor",
+    mode: "mock",
+    output: { kind: "margin_update", margin_pct: 0.1 },
+  });
+  expect(finance.status).toBe(200);
+  expect(finance.json).toMatchObject({ ok: true, ignored: true });
+
+  const ops = await post(url, "/api/webhooks/inbound?dept=engineering", {
+    dept: "ops",
+    task_id: "ops-route-1",
+    actor: "dev4-ops",
+    status: "done",
+    summary: "Ops routed a task to engineering",
+    mode: "mock",
+    output: { kind: "task_routed", target_dept: "engineering" },
+  });
+  expect(ops.status).toBe(202);
+  const started = Date.now();
+  let events: Array<{ dept: string; actor?: string; parent_id?: string; output?: { kind?: string; source_dept?: string } }> = [];
+  while (Date.now() - started < 4000) {
+    events = ((await fetch(new URL("/api/events?limit=40", url)).then((response) => response.json())) as { events: typeof events }).events;
+    if (events.some((event) => event.actor === "engineering-bot" && event.parent_id === "ops-route-1")) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const ack = events.find((event) => event.actor === "engineering-bot" && event.parent_id === "ops-route-1");
+  expect(ack?.dept).toBe("engineering");
+  expect(ack?.output?.kind).toBe("dept_seen");
+  expect(ack?.output?.source_dept).toBe("ops");
+  expect(events.some((event) => event.actor === "standin-dev4")).toBe(false);
+
+  const order = await post(url, "/api/webhooks/inbound?dept=support", {
+    dept: "ops",
+    task_id: "order-pulse-1",
+    actor: "dev4-ops",
+    status: "done",
+    summary: "MOCK order placed",
+    mode: "mock",
+    output: { kind: "order_placed", order_id: "order-pulse-1", title: "Pulse Studio" },
+  });
+  expect(order.status).toBe(202);
+  const supportStarted = Date.now();
+  while (Date.now() - supportStarted < 4000) {
+    events = ((await fetch(new URL("/api/events?limit=40", url)).then((response) => response.json())) as { events: typeof events }).events;
+    if (events.some((event) => event.dept === "support" && event.parent_id === "order-pulse-1")) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  expect(events.some((event) => event.dept === "support" && event.actor === "support-bot" && event.parent_id === "order-pulse-1")).toBe(true);
+});
+
+it("completes an orchestrator sales task on the same task id", async () => {
+  const url = await boot();
+  const response = await post(url, "/api/webhooks/inbound", {
+    dept: "sales",
+    task_id: "sales-70885544",
+    parent_id: "req-1a85a6c9",
+    actor: "auto",
+    status: "queued",
+    summary: "Task: Draft a sales note for leads",
+    mode: "live",
+    output: {
+      kind: "task",
+      title: "Draft a sales note for leads",
+      for_dept: "sales",
+      detail: { text: "Draft a sales note for leads", source: "orchestrator" },
+    },
+  });
+  expect(response.status).toBe(202);
+  const started = Date.now();
+  let done: { task_id?: string; parent_id?: string; status?: string; dept?: string; actor?: string; mode?: string; output?: { source?: string; request_id?: string } } | undefined;
+  while (Date.now() - started < 8000) {
+    const body = (await fetch(new URL("/api/events?limit=40", url)).then((res) => res.json())) as {
+      events: Array<typeof done>;
+    };
+    done = body.events.find((event) => event?.task_id === "sales-70885544" && event.status === "done");
+    if (done) break;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  }
+  expect(done?.dept).toBe("sales");
+  expect(done?.actor).toBe("sales-bot");
+  expect(done?.parent_id).toBe("req-1a85a6c9");
+  expect(done?.output?.source).toBe("orchestrator");
+  expect(done?.output?.request_id).toBe("req-1a85a6c9");
+  expect(done?.mode).toBe("mock");
+
+  const ignored = await post(url, "/api/webhooks/inbound", {
+    dept: "finance",
+    task_id: "finance-skip",
+    actor: "auto",
+    status: "queued",
+    summary: "Not our dept",
+    mode: "mock",
+    output: { kind: "task", detail: { source: "orchestrator", text: "margin" }, for_dept: "finance" },
+  });
+  expect(ignored.status).toBe(200);
+  expect(ignored.json).toMatchObject({ ok: true, ignored: true });
 });
 
 it("serves one MCP endpoint, the panel, and a 10s poll fallback", async () => {

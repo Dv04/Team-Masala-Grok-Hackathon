@@ -1,6 +1,6 @@
 import { actorFor, type Dept } from "../config.js";
 import { redactOutput, redactValue } from "./redact.js";
-import { POLL_FALLBACK_MS, queueMirror, requestJson } from "../http.js";
+import { POLL_FALLBACK_MS, postHub, queueMirror, requestJson } from "../http.js";
 import type { InboundHub } from "../inbound/hub.js";
 import type { DepartmentEvent, OpsTask, QaResponse } from "./types.js";
 
@@ -28,12 +28,16 @@ export class DepartmentClient {
     summary: string;
     output?: Record<string, unknown>;
     needs_approval?: boolean;
-  }): Promise<{ event: DepartmentEvent; qa?: QaResponse }> {
+    mode?: "live" | "mock";
+  }): Promise<{ event: DepartmentEvent; qa?: QaResponse; queued?: boolean }> {
+    const copyMode = partial.output?.copy_mode;
+    let mode = partial.mode ?? this.options.mode;
+    if (copyMode === "mock" || (mode === "live" && !process.env.XAI_API_KEY?.trim())) mode = "mock";
     const event = {
       ts: new Date().toISOString(),
       dept: this.options.dept,
       actor: this.options.actor ?? actorFor(this.options.dept),
-      mode: this.options.mode,
+      mode,
       task_id: partial.task_id,
       ...(partial.parent_id ? { parent_id: partial.parent_id } : {}),
       status: partial.status,
@@ -41,11 +45,8 @@ export class DepartmentClient {
       ...(partial.output ? { output: redactOutput(partial.output) } : {}),
       needs_approval: partial.needs_approval === true || partial.status === "needs_approval",
     };
-    const response = await requestJson(new URL("/api/events", this.options.baseUrl), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(event),
-    });
+    const response = await postHub(new URL("/api/events", this.options.baseUrl), event);
+    if (!response) return { event, queued: true };
     if (!response.ok) throw new Error(`Event log failed (${response.status}): ${await response.text()}`);
     const body = (await response.json()) as { ok?: boolean; event?: DepartmentEvent; qa?: QaResponse; error?: string };
     if (!body.event) throw new Error(body.error || "Event log failed: response had no event");
@@ -74,19 +75,35 @@ export class DepartmentClient {
     if (query.status) url.searchParams.set("status", query.status);
     const dept = query.dept === "" ? "" : query.dept ?? this.options.dept;
     if (dept) url.searchParams.set("dept", dept);
-    const response = await requestJson(url, {}, { retries: 2 });
-    if (!response.ok) throw new Error(`Event read failed (${response.status})`);
-    const body = (await response.json()) as { events: DepartmentEvent[] };
-    return body.events;
+    try {
+      const response = await requestJson(url, {}, { retries: 2 });
+      if (!response.ok) throw new Error(`Event read failed (${response.status})`);
+      const body = (await response.json()) as { events: DepartmentEvent[] };
+      return body.events;
+    } catch (error) {
+      console.error("hub event poll failed", error instanceof Error ? error.message : error);
+      return [];
+    }
+  }
+
+  async checkQa(body: Record<string, unknown>): Promise<QaResponse | null> {
+    const response = await postHub(new URL("/api/qa/check", this.options.baseUrl), body);
+    if (!response?.ok) return null;
+    return (await response.json()) as QaResponse;
   }
 
   async listTasks(): Promise<OpsTask[]> {
     const url = new URL("/api/tasks", this.options.baseUrl);
     url.searchParams.set("dept", this.options.dept);
-    const response = await requestJson(url, {}, { retries: 2 });
-    if (!response.ok) throw new Error(`Task read failed (${response.status})`);
-    const body = (await response.json()) as { tasks: OpsTask[] };
-    return body.tasks;
+    try {
+      const response = await requestJson(url, {}, { retries: 2 });
+      if (!response.ok) throw new Error(`Task read failed (${response.status})`);
+      const body = (await response.json()) as { tasks: OpsTask[] };
+      return body.tasks;
+    } catch (error) {
+      console.error("hub task poll failed", error instanceof Error ? error.message : error);
+      return [];
+    }
   }
 
   async waitForQa(taskId: string, qaRequestId: string, timeoutMs = 5000, skip = 0): Promise<QaResponse> {

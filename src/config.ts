@@ -22,9 +22,10 @@ export function isDept(value: unknown): value is Dept {
 
 export const DEFAULT_DEPARTMENTS_URL = "http://localhost:8810";
 
-/** Live when this process posts to the real departments service. Tests pass mode "mock". */
+/** Live only when an xAI key is set and this process is not forced into the test mock. */
 export function resolveEventMode(env: NodeJS.ProcessEnv = process.env): "live" | "mock" {
   if (env.TOOLS_MODE === "mock") return "mock";
+  if (!env.XAI_API_KEY?.trim()) return "mock";
   return "live";
 }
 

@@ -20,9 +20,10 @@ import { DepartmentClient, followEventStream } from "./contract/client.js";
 import type { DepartmentEvent, OpsTask } from "./contract/types.js";
 import { ContractError, DepartmentsEngine } from "./departments/engine.js";
 import { planIssue } from "./engineering/bot.js";
-import { HttpError, readJson, sendJson, sendText } from "./http.js";
+import { HttpError, postHub, readJson, requestJson, sendJson, sendText } from "./http.js";
+import { listingFromUpstream } from "./listing.js";
 import { newId } from "./ids.js";
-import { asInboundEvent, InboundHub } from "./inbound/hub.js";
+import { classifyInbound, InboundHub } from "./inbound/hub.js";
 import { handleMcp, type McpTool } from "./mcp.js";
 import { panelHtml } from "./panel/page.js";
 import { draftOutreach, findLeads } from "./sales/bot.js";
@@ -54,7 +55,8 @@ export function createApp(options: AppOptions): App {
   const seenListings = new Set<string>();
   const subscribers = new Set<(chunk: string) => void>();
   const stuckAfterMs = options.stuckAfterMs ?? Number(process.env.OPS_STUCK_AFTER_MS ?? 60_000);
-  const mode = options.mode ?? resolveEventMode();
+  const requested = options.mode ?? resolveEventMode();
+  const mode = requested === "live" && !process.env.XAI_API_KEY?.trim() ? "mock" : requested;
 
   const same = (left: string, right: string) => left.replace(/\/$/, "") === right.replace(/\/$/, "");
 
@@ -503,10 +505,17 @@ export function createApp(options: AppOptions): App {
       return;
     }
     if (url.pathname === WEBHOOK_PATH && method === "POST") {
-      const event = asInboundEvent(await readJson(req));
-      hub.push(event);
-      sendJson(res, 202, { ok: true, dept: event.dept });
-      void noteListing(event);
+      const decision = classifyInbound(await readJson(req), url.searchParams.get("dept"));
+      if (decision.status === 400) throw new HttpError(400, decision.reason ?? "Bad webhook");
+      if (decision.ignored || !decision.event) {
+        sendJson(res, 200, { ok: true, ignored: true, reason: decision.reason ?? "ignored" });
+        return;
+      }
+      hub.push(decision.event);
+      sendJson(res, 202, { ok: true, dept: decision.target ?? decision.event.dept, react: decision.react });
+      void reactInbound(decision.event, decision.react, decision.target).catch((error) => {
+        console.error("inbound reaction failed", error instanceof Error ? error.message : error);
+      });
       return;
     }
     if (url.pathname === WEBHOOK_PATH && method === "GET") {
@@ -561,29 +570,113 @@ export function createApp(options: AppOptions): App {
     sendJson(res, 404, { error: "Not found" });
   }
 
+  async function reactInbound(
+    event: DepartmentEvent,
+    react: "listing" | "order" | "ack" | "store" | "orchestrator" | undefined,
+    target?: Dept,
+  ): Promise<void> {
+    if (react === "listing") return noteListing(event);
+    if (react === "order") return noteOrder(event);
+    if (react === "orchestrator" && target) return noteOrchestrator(event, target);
+    if (react === "ack" && target) return noteAck(event, target);
+  }
+
+  async function noteOrchestrator(event: DepartmentEvent, target: Dept): Promise<void> {
+    const key = `orch:${target}:${event.task_id}`;
+    if (seenListings.has(key)) return;
+    seenListings.add(key);
+    const output = event.output ?? {};
+    const detail = output.detail && typeof output.detail === "object" ? (output.detail as Record<string, unknown>) : {};
+    const title =
+      (typeof output.title === "string" && output.title) ||
+      (typeof detail.text === "string" && detail.text) ||
+      event.summary ||
+      "orchestrator task";
+    const requestId = typeof event.parent_id === "string" && event.parent_id ? event.parent_id : undefined;
+    try {
+      if (target === "sales") await findLeads(ctx, { icp: title, limit: 1, ...(requestId ? { parentId: requestId } : {}) });
+      else if (target === "support") await triage(ctx);
+      else await planIssue(ctx, requestId ? { parentId: requestId } : {});
+    } catch (error) {
+      console.error("orchestrator handler failed", error instanceof Error ? error.message : error);
+    }
+    try {
+      await ctx.clientFor(target).log({
+        task_id: event.task_id,
+        ...(requestId ? { parent_id: requestId } : {}),
+        status: "done",
+        summary: `${target} completed orchestrator task: ${title}`.slice(0, 200),
+        output: {
+          kind: "routed_task",
+          source: "orchestrator",
+          for_dept: target,
+          ...(requestId ? { request_id: requestId } : {}),
+        },
+      });
+    } catch (error) {
+      console.error("orchestrator done event failed", error instanceof Error ? error.message : error);
+    }
+  }
+
+  async function noteAck(event: DepartmentEvent, target: Dept): Promise<void> {
+    const key = `ack:${target}:${event.task_id}:${event.status}:${String(event.output?.kind ?? "")}`;
+    if (seenListings.has(key)) return;
+    seenListings.add(key);
+    await ctx.clientFor(target).log({
+      task_id: newId("seen"),
+      parent_id: event.task_id,
+      status: "done",
+      summary: `${target} received ${event.dept} ${String(event.output?.kind ?? event.status)}`,
+      output: {
+        kind: "dept_seen",
+        source_dept: event.dept,
+        source_task: event.task_id,
+        trigger: event.output?.kind ?? event.status,
+      },
+    });
+  }
+
+  async function noteOrder(event: DepartmentEvent): Promise<void> {
+    if (seenListings.has(`order:${event.task_id}`)) return;
+    seenListings.add(`order:${event.task_id}`);
+    await draftReply(ctx, {
+      parentId: event.task_id,
+      message: {
+        id: "msg_pulse_order",
+        from_name: "Buyer",
+        body: "Where is my Pulse Studio order?",
+        channel: "email",
+      },
+    });
+  }
+
   async function noteListing(event: DepartmentEvent): Promise<void> {
-    if (event.output?.kind !== "listing_live" || event.dept !== "design") return;
+    if (event.output?.kind !== "listing_live" || typeof event.output.listing_task === "string") return;
     if (seenListings.has(event.task_id)) return;
     seenListings.add(event.task_id);
-    const product = event.output.product;
-    const price =
-      product && typeof product === "object" && "price_usd" in product
-        ? (product as { price_usd?: unknown }).price_usd
-        : (event.output.price ?? null);
-    const page = typeof event.output.url === "string" ? event.output.url : "";
-    const shared = { kind: "listing_live", url: page, price, listing_task: event.task_id };
+    const listing = listingFromUpstream({ taskId: event.task_id, output: event.output, summary: event.summary });
+    const page = listing.product.url;
+    const shared = {
+      kind: "listing_live",
+      url: page,
+      price: listing.product.price_usd,
+      listing_task: event.task_id,
+      copy: listing.copy,
+      copy_mode: "mock" as const,
+      product: listing.product,
+    };
     await ctx.clientFor("engineering").log({
       task_id: newId("englist"),
       parent_id: event.task_id,
       status: "done",
-      summary: "Engineering recorded the live listing",
+      summary: `${listing.product.title} recorded by engineering`,
       output: shared,
     });
     await ctx.clientFor("sales").log({
       task_id: newId("salelist"),
       parent_id: event.task_id,
       status: "done",
-      summary: "Sales recorded the live listing",
+      summary: `${listing.product.title} listing is live`,
       output: shared,
     });
     await draftReply(ctx, {
@@ -591,7 +684,7 @@ export function createApp(options: AppOptions): App {
       message: {
         id: "msg_listing_buyer",
         from_name: "Buyer",
-        body: "When will this listing ship?",
+        body: `When will ${listing.product.title} ship?`,
         channel: "email",
       },
     });
@@ -600,7 +693,13 @@ export function createApp(options: AppOptions): App {
   async function remoteTasks(dept?: string): Promise<OpsTask[]> {
     const url = new URL("/api/tasks", options.getDepartmentsUrl());
     if (dept) url.searchParams.set("dept", dept);
-    const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    let response: Response;
+    try {
+      response = await requestJson(url, {}, { retries: 2, timeoutMs: 8000 });
+    } catch (error) {
+      console.error("hub task poll failed", error instanceof Error ? error.message : error);
+      return [];
+    }
     if (!response.ok) throw new HttpError(response.status, "Could not read the task inbox");
     const body = (await response.json()) as { tasks?: OpsTask[] };
     return body.tasks ?? [];
@@ -613,10 +712,20 @@ export function createApp(options: AppOptions): App {
     for (const item of depts) {
       const tasks = local ? engine.listTasks(item) : await remoteTasks(item);
       for (const task of tasks) {
-        if (task.source !== "inbound" || !task.kind || task.status !== "queued" || startedTasks.has(task.id)) continue;
-        startedTasks.add(task.id);
+        const origin = taskOrigin(task);
+        const taskKey = task.id || task.task_id;
+        if (task.status !== "queued" || startedTasks.has(taskKey)) continue;
+        if (origin !== "inbound" && origin !== "orchestrator") continue;
+        if (origin === "inbound" && !task.kind) continue;
+        startedTasks.add(taskKey);
         if (local) engine.markTask(task.id, "running");
         try {
+          if (origin === "orchestrator") {
+            await noteOrchestrator(taskAsEvent(task), task.dept);
+            if (local) engine.markTask(task.id, "done");
+            results.push({ task_id: task.task_id, kind: task.kind ?? "routed_task", result: { source: "orchestrator" } });
+            continue;
+          }
           const result = await dispatch(task);
           if (local) engine.markTask(task.id, "done");
           results.push({ task_id: task.task_id, kind: task.kind, result });
@@ -666,6 +775,39 @@ export function createApp(options: AppOptions): App {
     if (!body.event) throw new HttpError(502, "Approval response had no event");
     return body.event;
   }
+}
+
+function sourceOf(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const source = (value as { source?: unknown }).source;
+  return typeof source === "string" ? source : undefined;
+}
+
+function taskOrigin(task: OpsTask): string {
+  const extra = task as OpsTask & { detail?: unknown };
+  const nested = sourceOf(extra.detail) ?? sourceOf(task.payload?.detail) ?? sourceOf(task.payload);
+  if (nested === "orchestrator") return "orchestrator";
+  return task.source;
+}
+
+function taskAsEvent(task: OpsTask): DepartmentEvent {
+  const extra = task as OpsTask & { title?: string; detail?: Record<string, unknown> };
+  const title = extra.title || task.summary;
+  return {
+    ts: task.created_at || new Date().toISOString(),
+    dept: task.dept,
+    task_id: task.task_id,
+    ...(task.parent_id ? { parent_id: task.parent_id } : {}),
+    actor: "orchestrator",
+    status: "queued",
+    summary: title,
+    mode: "mock",
+    output: {
+      kind: "task",
+      title,
+      detail: extra.detail ?? { source: "orchestrator", text: title },
+    },
+  };
 }
 
 interface InboundBody {
@@ -722,19 +864,32 @@ export async function listen(server: Server, port = 0): Promise<string> {
 export async function registerWebhooks(departmentsUrl: string, selfUrl: string): Promise<void> {
   for (const dept of DEPTS) {
     try {
-      const response = await fetch(new URL("/api/webhooks", departmentsUrl), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: `${selfUrl}${WEBHOOK_PATH}`, dept }),
+      const response = await postHub(new URL("/api/webhooks", departmentsUrl), {
+        url: `${selfUrl}${WEBHOOK_PATH}?dept=${dept}`,
+        dept,
       });
-      if (!response.ok) console.warn(`Webhook registration for ${dept} returned ${response.status}`);
+      if (response && !response.ok) console.warn(`Webhook registration for ${dept} returned ${response.status}`);
     } catch (error) {
       console.warn(`Webhook registration for ${dept} failed: ${error instanceof Error ? error.message : error}`);
     }
   }
 }
 
+let guardsInstalled = false;
+
+export function installProcessGuards(): void {
+  if (guardsInstalled) return;
+  guardsInstalled = true;
+  process.on("unhandledRejection", (reason) => {
+    console.error("unhandledRejection", reason instanceof Error ? (reason.stack ?? reason.message) : reason);
+  });
+  process.on("uncaughtException", (error) => {
+    console.error("uncaughtException", error instanceof Error ? (error.stack ?? error.message) : error);
+  });
+}
+
 export async function start(port = Number(process.env.WEBHOOK_PORT ?? DEFAULT_PORT)): Promise<{ url: string; close: () => Promise<void> }> {
+  installProcessGuards();
   assertAllowedPort(port);
   const dataDir = path.join(process.cwd(), "data");
   let selfUrl = "";

@@ -27,16 +27,65 @@ export class InboundHub {
   }
 }
 
-export function asInboundEvent(raw: unknown): DepartmentEvent {
-  if (!raw || typeof raw !== "object") throw new Error("Webhook body must be a JSON object");
-  const body = raw as Record<string, unknown>;
-  const source = body.event && typeof body.event === "object" ? (body.event as Record<string, unknown>) : body;
-  const forDept = source.output && typeof source.output === "object" ? (source.output as { for_dept?: unknown }).for_dept : undefined;
-  const kind = source.output && typeof source.output === "object" ? (source.output as { kind?: unknown }).kind : undefined;
-  const deptOk = isDept(source.dept) || (source.dept === "qa" && isDept(forDept)) || (source.dept === "design" && kind === "listing_live");
-  if (!deptOk) throw new Error("Webhook dept must be sales, support, or engineering");
-  if (typeof source.task_id !== "string" || typeof source.actor !== "string" || typeof source.status !== "string") {
-    throw new Error("Webhook payload is missing task_id, actor, or status");
+const OUR_ACTORS = new Set(["sales-bot", "support-bot", "engineering-bot"]);
+
+export interface InboundDecision {
+  status: 200 | 202 | 400;
+  ignored?: boolean;
+  reason?: string;
+  event?: DepartmentEvent;
+  /** Dept that should answer. Comes from ?dept=, output.target_dept, output.for_dept, or a source dept we own. */
+  target?: Dept;
+  react?: "listing" | "order" | "ack" | "store" | "orchestrator";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+/** The hub posts the emitting dept (design, ops, research, …). Route by the registration target, not that field. */
+export function classifyInbound(raw: unknown, queryDept?: unknown): InboundDecision {
+  const body = asRecord(raw);
+  if (!body) return { status: 400, reason: "Webhook body must be a JSON object" };
+  const source = asRecord(body.event) ?? body;
+  const output = asRecord(source.output) ?? {};
+  const kind = typeof output.kind === "string" ? output.kind : undefined;
+  const query = isDept(queryDept) ? queryDept : undefined;
+  const explicit = query ?? (isDept(output.target_dept) ? output.target_dept : undefined) ?? (isDept(output.for_dept) ? output.for_dept : undefined);
+  const sourceDept = typeof source.dept === "string" ? source.dept : "";
+  const target = explicit ?? (isDept(sourceDept) ? sourceDept : undefined);
+  const hasCore = typeof source.task_id === "string" && typeof source.actor === "string" && typeof source.status === "string";
+  const event = source as unknown as DepartmentEvent;
+
+  if (!hasCore) {
+    return { status: 200, ignored: true, reason: "missing task_id, actor, or status" };
   }
-  return source as unknown as DepartmentEvent;
+  if (typeof source.actor === "string" && OUR_ACTORS.has(source.actor)) {
+    return { status: 200, ignored: true, reason: "echo of our own event", event };
+  }
+  if (sourceDept === "qa" || source.actor === "founder" || source.actor === "dev4-qa-gate") {
+    const qaTarget = isDept(output.for_dept) ? output.for_dept : target;
+    if (!qaTarget) return { status: 200, ignored: true, reason: "qa or founder event without our dept", event };
+    return { status: 202, event, target: qaTarget, react: "store" };
+  }
+  const detail = asRecord(output.detail);
+  const taskSource =
+    (typeof detail?.source === "string" ? detail.source : undefined) ??
+    (typeof output.source === "string" ? output.source : undefined) ??
+    (typeof body.source === "string" ? body.source : undefined);
+  const routed =
+    (isDept(output.for_dept) ? output.for_dept : undefined) ??
+    (detail && isDept(detail.for_dept) ? detail.for_dept : undefined) ??
+    target;
+  if (taskSource === "orchestrator" && routed) {
+    return { status: 202, event, target: routed, react: "orchestrator" };
+  }
+  if (kind === "listing_live" && typeof output.listing_task !== "string") {
+    return { status: 202, event, target: target ?? "sales", react: "listing" };
+  }
+  if (kind === "order_placed") {
+    return { status: 202, event, target: "support", react: "order" };
+  }
+  if (!target) return { status: 200, ignored: true, reason: "not for sales, support, or engineering", event };
+  return { status: 202, event, target, react: "ack" };
 }

@@ -188,7 +188,8 @@ it.skipIf(!base)("exercises every tool, chain, and Pulse handoff on the real dep
         events: Array<{ dept: string; mode?: string; parent_id?: string; status?: string }>;
       };
       for (const dept of ["sales", "support", "engineering"]) {
-        expect(events.events.some((event) => event.dept === dept && event.mode === "live")).toBe(true);
+        const honest = process.env.XAI_API_KEY?.trim() ? "live" : "mock";
+        expect(events.events.some((event) => event.dept === dept && event.mode === honest)).toBe(true);
       }
       expect(events.events.some((event) => event.parent_id)).toBe(true);
       return page.status;
