@@ -1,3 +1,5 @@
+import { withToolFallback } from "../tools/fallback.js";
+
 export interface InboxMessage {
   id: string;
   from_name: string;
@@ -62,45 +64,54 @@ export function supportEnvFrom(env: NodeJS.ProcessEnv = process.env): SupportToo
   };
 }
 
-function missing(name: string): Error {
-  return new Error(`${name} is not configured. Live support adapters fail closed until it is set.`);
-}
-
 export interface SupportAdapters {
-  listInbox(): Promise<InboxMessage[]>;
+  listInbox(): Promise<InboxMessage[] & { mode: "live" | "mock" }>;
   retrieve(query: string, entries: { q: string; a: string }[]): Promise<{ hits: number; mode: "live" | "mock" }>;
 }
 
 export function createSupportAdapters(env: SupportToolEnv = supportEnvFrom()): SupportAdapters {
-  if (env.toolsMode === "live") {
-    return {
-      async listInbox() {
-        if (!env.chatwootBaseUrl || !env.chatwootToken || !env.chatwootAccountId) throw missing("CHATWOOT_BASE_URL");
-        const response = await fetch(
-          new URL(`/api/v1/accounts/${env.chatwootAccountId}/conversations`, env.chatwootBaseUrl),
-          { headers: { api_access_token: env.chatwootToken } },
-        );
-        if (!response.ok) throw new Error(`Chatwoot returned ${response.status}`);
-        return [];
-      },
-      async retrieve() {
-        if (!env.ragflowBaseUrl || !env.ragflowApiKey) throw missing("RAGFLOW_BASE_URL");
-        const response = await fetch(new URL("/api/v1/retrieval", env.ragflowBaseUrl), {
-          method: "POST",
-          headers: { authorization: `Bearer ${env.ragflowApiKey}`, "content-type": "application/json" },
-          body: JSON.stringify({ question: "faq" }),
-        });
-        if (!response.ok) throw new Error(`RAGFlow returned ${response.status}`);
-        return { hits: 0, mode: "live" };
-      },
-    };
-  }
-  return {
+  const mock: SupportAdapters = {
     async listInbox() {
-      return INBOX.map((message) => ({ ...message }));
+      return Object.assign(
+        INBOX.map((message) => ({ ...message })),
+        { mode: "mock" as const },
+      );
     },
     async retrieve(_query, entries) {
       return { hits: entries.length, mode: "mock" };
+    },
+  };
+  if (env.toolsMode !== "live") return mock;
+  return {
+    async listInbox() {
+      return withToolFallback(
+        Boolean(env.chatwootBaseUrl && env.chatwootToken && env.chatwootAccountId),
+        async (signal) => {
+          const response = await fetch(new URL(`/api/v1/accounts/${env.chatwootAccountId}/conversations`, env.chatwootBaseUrl), {
+            headers: { api_access_token: env.chatwootToken ?? "" },
+            signal,
+          });
+          if (!response.ok) throw new Error(`Chatwoot returned ${response.status}`);
+          return Object.assign([] as InboxMessage[], { mode: "live" as const });
+        },
+        () => mock.listInbox(),
+      );
+    },
+    async retrieve(query, entries) {
+      return withToolFallback(
+        Boolean(env.ragflowBaseUrl && env.ragflowApiKey),
+        async (signal) => {
+          const response = await fetch(new URL("/api/v1/retrieval", env.ragflowBaseUrl), {
+            method: "POST",
+            headers: { authorization: `Bearer ${env.ragflowApiKey}`, "content-type": "application/json" },
+            body: JSON.stringify({ question: query || "faq" }),
+            signal,
+          });
+          if (!response.ok) throw new Error(`RAGFlow returned ${response.status}`);
+          return { hits: 0, mode: "live" as const };
+        },
+        () => mock.retrieve(query, entries),
+      );
     },
   };
 }

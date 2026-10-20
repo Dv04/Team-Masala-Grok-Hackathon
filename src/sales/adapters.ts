@@ -1,5 +1,7 @@
+import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { withToolFallback } from "../tools/fallback.js";
 
 export interface Lead {
   id: string;
@@ -73,104 +75,22 @@ const POOL: Lead[] = [
 ];
 
 export interface SalesAdapters {
-  openoutreach: { find(icp: string, limit: number): Promise<Lead[]> };
+  openoutreach: { find(icp: string, limit: number): Promise<Lead[] & { mode: "live" | "mock" }> };
   reacher: { check(email: string): Promise<{ is_reachable: "safe" | "invalid"; mode: "live" | "mock" }> };
   twenty: { upsertPerson(lead: Lead): Promise<{ id: string; mode: "live" | "mock" }> };
   warmbly: { enroll(lead: Lead): Promise<{ provider: "warmbly"; mode: "live" | "mock"; sequence: string }> };
   crm: { write(dataDir: string, leads: Lead[]): Promise<void> };
 }
 
-function liveError(name: string): Error {
-  return new Error(`${name} is not configured. Set the URL and key in the environment before TOOLS_MODE=live.`);
-}
-
 export function createSalesAdapters(env: ToolEnv = toolEnvFrom()): SalesAdapters {
-  if (env.toolsMode === "live") {
-    return {
-      openoutreach: {
-        async find(icp, limit) {
-          if (!env.openoutreachBin) throw liveError("OPENOUTREACH_BIN");
-          const { spawn } = await import("node:child_process");
-          // find only. send and run stay disabled so outreach cannot leave this adapter.
-          const output = await new Promise<string>((resolve, reject) => {
-            const child = spawn(env.openoutreachBin as string, ["find", String(limit), "--json"], {
-              stdio: ["ignore", "pipe", "pipe"],
-            });
-            let text = "";
-            child.stdout.on("data", (chunk) => {
-              text += String(chunk);
-            });
-            child.on("error", reject);
-            child.on("close", (code) => (code === 0 ? resolve(text) : reject(new Error(`openoutreach find exited ${code}`))));
-          });
-          return output
-            .split("\n")
-            .filter(Boolean)
-            .slice(0, limit)
-            .map((line, index) => {
-              const row = JSON.parse(line) as Partial<Lead>;
-              return {
-                id: row.id || `live_${index}`,
-                name: row.name || "Unknown",
-                title: row.title || "",
-                company: row.company || "",
-                domain: row.domain || "",
-                email: row.email || "",
-                score: row.score ?? 0,
-                ...(icp ? {} : {}),
-              };
-            });
-        },
-      },
-      reacher: {
-        async check(email) {
-          if (!env.reacherBaseUrl) throw liveError("REACHER_BASE_URL");
-          const response = await fetch(new URL("/v0/check_email", env.reacherBaseUrl), {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ to_email: email }),
-          });
-          if (!response.ok) throw new Error(`Reacher returned ${response.status}`);
-          const body = (await response.json()) as { is_reachable?: string };
-          return { is_reachable: body.is_reachable === "safe" ? "safe" : "invalid", mode: "live" };
-        },
-      },
-      twenty: {
-        async upsertPerson(lead) {
-          if (!env.twentyBaseUrl || !env.twentyApiKey) throw liveError("TWENTY_BASE_URL");
-          const response = await fetch(new URL("/rest/people", env.twentyBaseUrl), {
-            method: "POST",
-            headers: { authorization: `Bearer ${env.twentyApiKey}`, "content-type": "application/json" },
-            body: JSON.stringify({ name: lead.name, company: lead.company }),
-          });
-          if (!response.ok) throw new Error(`Twenty returned ${response.status}`);
-          const body = (await response.json()) as { id?: string };
-          return { id: body.id || lead.id, mode: "live" };
-        },
-      },
-      warmbly: {
-        async enroll() {
-          if (!env.warmblyBaseUrl || !env.warmblyApiKey) throw liveError("WARMBLY_BASE_URL");
-          const response = await fetch(new URL("/api/v1/sequences/enroll", env.warmblyBaseUrl), {
-            method: "POST",
-            headers: { authorization: `Bearer ${env.warmblyApiKey}`, "content-type": "application/json" },
-            body: JSON.stringify({ sequence: "first-touch" }),
-          });
-          if (!response.ok) throw new Error(`Warmbly returned ${response.status}`);
-          return { provider: "warmbly", mode: "live", sequence: "first-touch" };
-        },
-      },
-      crm: { write: writeCrm },
-    };
-  }
-
-  return {
+  const mock: SalesAdapters = {
     openoutreach: {
       async find(icp, limit) {
-        return POOL.slice(0, Math.max(1, Math.min(limit, POOL.length))).map((lead) => ({
+        const leads = POOL.slice(0, Math.max(1, Math.min(limit, POOL.length))).map((lead) => ({
           ...lead,
           score: icp ? lead.score : lead.score,
         }));
+        return Object.assign(leads, { mode: "mock" as const });
       },
     },
     reacher: {
@@ -195,6 +115,117 @@ export function createSalesAdapters(env: ToolEnv = toolEnvFrom()): SalesAdapters
     },
     crm: { write: writeCrm },
   };
+
+  if (env.toolsMode !== "live") return mock;
+
+  return {
+    openoutreach: {
+      async find(icp, limit) {
+        return withToolFallback(
+          Boolean(env.openoutreachBin),
+          (signal) => liveOpenoutreach(env.openoutreachBin as string, icp, limit, signal),
+          () => mock.openoutreach.find(icp, limit),
+        );
+      },
+    },
+    reacher: {
+      async check(email) {
+        return withToolFallback(
+          Boolean(env.reacherBaseUrl),
+          async (signal) => {
+            const response = await fetch(new URL("/v0/check_email", env.reacherBaseUrl), {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ to_email: email }),
+              signal,
+            });
+            if (!response.ok) throw new Error(`Reacher returned ${response.status}`);
+            const body = (await response.json()) as { is_reachable?: string };
+            return { is_reachable: body.is_reachable === "safe" ? ("safe" as const) : ("invalid" as const), mode: "live" as const };
+          },
+          () => mock.reacher.check(email),
+        );
+      },
+    },
+    twenty: {
+      async upsertPerson(lead) {
+        return withToolFallback(
+          Boolean(env.twentyBaseUrl && env.twentyApiKey),
+          async (signal) => {
+            const response = await fetch(new URL("/rest/people", env.twentyBaseUrl), {
+              method: "POST",
+              headers: { authorization: `Bearer ${env.twentyApiKey}`, "content-type": "application/json" },
+              body: JSON.stringify({ name: lead.name, company: lead.company }),
+              signal,
+            });
+            if (!response.ok) throw new Error(`Twenty returned ${response.status}`);
+            const body = (await response.json()) as { id?: string };
+            return { id: body.id || lead.id, mode: "live" as const };
+          },
+          () => mock.twenty.upsertPerson(lead),
+        );
+      },
+    },
+    warmbly: {
+      async enroll(lead) {
+        return withToolFallback(
+          Boolean(env.warmblyBaseUrl && env.warmblyApiKey),
+          async (signal) => {
+            const response = await fetch(new URL("/api/v1/sequences/enroll", env.warmblyBaseUrl), {
+              method: "POST",
+              headers: { authorization: `Bearer ${env.warmblyApiKey}`, "content-type": "application/json" },
+              body: JSON.stringify({ sequence: "first-touch" }),
+              signal,
+            });
+            if (!response.ok) throw new Error(`Warmbly returned ${response.status}`);
+            return { provider: "warmbly" as const, mode: "live" as const, sequence: "first-touch" };
+          },
+          () => mock.warmbly.enroll(lead),
+        );
+      },
+    },
+    crm: { write: writeCrm },
+  };
+}
+
+async function liveOpenoutreach(bin: string, icp: string, limit: number, signal: AbortSignal): Promise<Lead[] & { mode: "live" }> {
+  // find only. send and run stay disabled so outreach cannot leave this adapter.
+  const output = await new Promise<string>((resolve, reject) => {
+    const child = spawn(bin, ["find", String(limit), "--json"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      signal,
+    });
+    let text = "";
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+    child.stdout.on("data", (chunk) => {
+      text += String(chunk);
+    });
+    child.on("error", (error) => settle(() => reject(error)));
+    child.on("close", (code) => settle(() => (code === 0 ? resolve(text) : reject(new Error(`openoutreach find exited ${code}`)))));
+  });
+  const leads = output
+    .split("\n")
+    .filter(Boolean)
+    .slice(0, limit)
+    .map((line, index) => {
+      const row = JSON.parse(line) as Partial<Lead>;
+      return {
+        id: row.id || `live_${index}`,
+        name: row.name || "Unknown",
+        title: row.title || "",
+        company: row.company || "",
+        domain: row.domain || "",
+        email: row.email || "",
+        score: row.score ?? 0,
+        ...(icp ? {} : {}),
+      };
+    });
+  return Object.assign(leads, { mode: "live" as const });
 }
 
 function csv(value: string | number): string {
