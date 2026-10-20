@@ -63,10 +63,14 @@ dev2 service  (default :8811)
   POST /api/webhooks/inbound        one receiver; routed internally by dept
   GET  /api/webhooks/inbound
   GET  /health
+  GET  /api/status?dept=            tile status for dev4's dashboard to read
+  GET  /panel                       embeddable panel (iframe). Not a second company dashboard.
         |
-        |  one DepartmentClient  (DEPARTMENTS_BASE_URL)
+        |  one DepartmentClient
+        |  DEPARTMENTS_BASE_URL for the contract
+        |  DASHBOARD_BASE_URL for the company feed (defaults to DEPARTMENTS_BASE_URL)
         v
-Departments contract
+Departments contract + dev4 dashboard (port 8810, page /dashboard)
   default: the same process mounts the mock contract on :8811
   live:    DEPARTMENTS_BASE_URL points at dev4 (their port 8810; public host TBD)
            and this process keeps serving tools, REST, and the webhook
@@ -143,14 +147,28 @@ Crawl4AI, PR-Agent, Plane, BookStack, and ContextForge stay documented in the re
 - `hire_needed` only from engineering. `design_request` only from sales or support.
 - MCP `initialize`, `tools/list`, and `tools/call` for `sales.find_leads`.
 
-`npm run demo` starts the mock and the bot server, runs all three bots, approves the founder-gated sales email, prints the event log and KPIs, and exits 0.
+`npm run demo` starts the one dev2 service (mock contract included), runs all three modules, approves the founder-gated sales email, prints the event log and KPIs, and exits 0.
+
+## Company dashboard and the dev2 panel
+
+Dev4 owns the one company dashboard at `/dashboard` (port 8810 on their box today). This service does not copy that page.
+
+- Events reach the live feed and the 13 tiles because we `POST /api/events` with `dept` set to `sales`, `support`, or `engineering`, honest `mode`, and `needs_approval` when a founder decision is required. `DASHBOARD_BASE_URL` defaults to `DEPARTMENTS_BASE_URL`. If the two URLs differ, the client also mirrors the stored event to the dashboard so the feed updates, with `needs_qa` removed so QA does not run twice.
+- Founder decisions are dev4's queue: `GET /api/approvals` and `POST /api/approvals/{task_id}`. The panel's Approve and Reject buttons call that API (the local mock until their public URL exists).
+- On startup we register `POST /api/webhooks` `{url, dept}` for each of the three departments. The URL is `http://<this-host>:8811/api/webhooks/inbound`.
+- Dev4 can point a tile at `GET http://<dev2-host>:8811/api/status?dept=sales` (also `support` and `engineering`). `GET /health` returns all three.
+- Embed the panel, do not frame their whole dashboard: `<iframe src="http://<dev2-host>:8811/panel" title="Sales, Support, and Engineering"></iframe>`.
+- The mock also serves the read shapes their page uses: `GET /api/stream?once=1`, `GET /api/automation/rules`, `GET /api/ops/kpis`, and the approval queue. `GET /dashboard` on this process is only a pointer to their page and to `/panel`.
+
+Their MCP stays at `{DEPARTMENTS_BASE_URL}/mcp` (`qa.check`, `events.append`, `ops.kpis`, `approvals.pending`, plus `approvals.decide` and `automation.rules` when that build is up). Our tool endpoint is `{this service}/mcp` with the five department tools. The mock contract tools are at `/mcp/departments` so the two lists do not collide on one port.
 
 ## Mock vs live
 
 | Switch | Effect |
 |---|---|
 | `DEPARTMENTS_BASE_URL=http://127.0.0.1:8811` | Local mock mounted in this same process (default). |
-| `DEPARTMENTS_BASE_URL=<dev4 public URL>` | Same client talks to the live contract. This process still serves `/mcp`, REST, and `/api/webhooks/inbound`. |
+| `DASHBOARD_BASE_URL` | Defaults to `DEPARTMENTS_BASE_URL`. Set it if the dashboard host differs. |
+| `DEPARTMENTS_BASE_URL=<dev4 public URL>` | Same client talks to the live contract and the company queue. This process still serves `/mcp`, `/panel`, `/api/status`, and `/api/webhooks/inbound`. |
 | `TOOLS_MODE=mock` | Adapters return fixtures. Event `mode` stays `mock` even if the departments URL is public. |
 | `TOOLS_MODE=live` plus tool URLs | Adapters call those services. Event `mode` becomes `live` only when the departments URL is not localhost. |
 | `EVENT_MODE=live` while tools are mocked | Ignored. Mock work is not labeled live. |
