@@ -190,6 +190,7 @@ it("launches Pulse Studio from a product through a live listing", async () => {
   const launched = await post(url, "/api/chains/launch", {});
   expect(launched.status, JSON.stringify(launched.json)).toBe(200);
   expect(launched.json.qa_passed).toBe(true);
+  expect(launched.json.copy_mode).toBe("mock");
   const events = (await fetch(new URL("/api/events?limit=50", url)).then((response) => response.json())) as {
     events: Array<{ task_id: string; parent_id?: string; output?: { kind?: string } }>;
   };
@@ -201,7 +202,9 @@ it("launches Pulse Studio from a product through a live listing", async () => {
   const support = events.events.find((event) => event.task_id === launched.json.support_task_id && event.parent_id);
   expect(support?.parent_id).toBe(launched.json.listing_task_id);
   const page = await fetch(new URL("/pulse", url));
-  expect(await page.text()).toContain("Pulse Studio");
+  const html = await page.text();
+  expect(html).toContain("Pulse Studio");
+  expect(html).toContain("MOCK");
 });
 
 it("serves one MCP endpoint, the panel, and a 10s poll fallback", async () => {

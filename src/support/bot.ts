@@ -1,4 +1,5 @@
 import { runCustomerGate } from "../contract/gate.js";
+import { grokText } from "../grok.js";
 import { newId } from "../ids.js";
 import { planIssue } from "../engineering/bot.js";
 import { draftOutreach } from "../sales/bot.js";
@@ -124,7 +125,8 @@ export async function draftReply(
     });
     return { task_id: taskId, intent, sent: gate.sent, decision: gate.decision ?? null };
   }
-  const answer = hits[0]?.a ?? "Thanks for writing in. A teammate will follow up with the details shortly.";
+  const grok = hits[0] ? null : await grokText(`Answer this buyer in one or two plain sentences: ${message.body}`);
+  const answer = hits[0]?.a ?? grok?.text ?? "Thanks for writing in. A teammate will follow up with the details shortly.";
   let faqId: string | undefined;
   if (!hits[0]) {
     faqId = newId("faq");
@@ -141,7 +143,11 @@ export async function draftReply(
     summary: "Drafted a customer reply from the FAQ",
     timeoutMs: input.timeoutMs,
     context: { message_id: message.id },
-    send: async () => ({ message_id: message.id, ...(faqId ? { faq_id: faqId } : {}) }),
+    send: async () => ({
+      message_id: message.id,
+      ...(faqId ? { faq_id: faqId } : {}),
+      ...(grok ? { grok: grok.mode } : {}),
+    }),
   });
   let engineering: Record<string, unknown> | undefined;
   let etaTaskId: string | undefined;

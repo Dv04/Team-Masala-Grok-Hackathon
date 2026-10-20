@@ -98,19 +98,11 @@ export async function chainLaunch(ctx: ServiceCtx, input: { parentId?: string; t
     output: { kind: "product_created", product: "Pulse Studio" },
   });
   const pageId = newId("page");
-  let copy = PULSE_COPY;
-  let copyMode: "live" | "mock" = "mock";
-  try {
-    const drafted = await grokText(
-      "Write one plain sentence describing Pulse Studio, a one-page product site for a small team. No prices, no email, no phone, no promises.",
-    );
-    if (drafted.mode === "live" && drafted.text.length > 12) {
-      copy = drafted.text;
-      copyMode = "live";
-    }
-  } catch {
-    copyMode = "mock";
-  }
+  const drafted = await grokText(
+    "Write one plain sentence describing Pulse Studio, a one-page product site for a small team. No prices, no email, no phone, no promises.",
+  );
+  const copy = drafted.mode === "live" ? drafted.text : drafted.text || PULSE_COPY;
+  const copyMode = drafted.mode;
   const page = await runCustomerGate({
     client: engineering,
     taskId: pageId,
@@ -125,7 +117,7 @@ export async function chainLaunch(ctx: ServiceCtx, input: { parentId?: string; t
       await mkdir(dir, { recursive: true });
       const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Pulse Studio</title></head><body><main><h1>Pulse Studio</h1><p>${copy}</p><p class="mode">${copyMode === "live" ? "LIVE" : "MOCK"}</p><p><a href="/panel">Ask support a question</a></p></main></body></html>`;
       await writeFile(path.join(dir, "index.html"), html);
-      return { page: "/pulse" };
+      return { page: "/pulse", grok: copyMode };
     },
   });
   const listingId = newId("listing");

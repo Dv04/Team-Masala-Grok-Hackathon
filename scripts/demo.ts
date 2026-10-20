@@ -5,12 +5,14 @@ import { createApp, listen } from "../src/server.js";
 
 const started = Date.now();
 const dir = await mkdtemp(join(tmpdir(), "dev2-demo-"));
+const remote = process.env.DEPARTMENTS_BASE_URL?.trim();
 let url = "";
 const app = createApp({
   dataDir: dir,
+  mode: remote ? "live" : "mock",
   getSelfUrl: () => url,
-  getDepartmentsUrl: () => process.env.DEPARTMENTS_BASE_URL?.trim() || url,
-  getDashboardUrl: () => process.env.DASHBOARD_BASE_URL?.trim() || process.env.DEPARTMENTS_BASE_URL?.trim() || url,
+  getDepartmentsUrl: () => remote || url,
+  getDashboardUrl: () => process.env.DASHBOARD_BASE_URL?.trim() || remote || url,
 });
 url = await listen(app.server, Number(process.env.WEBHOOK_PORT ?? 8811));
 console.log(`dev2 ${url}`);
@@ -59,6 +61,7 @@ await call("/api/engineering/plan-issue");
 await call("/api/chains/bug");
 await call("/api/chains/lead", { timeoutMs: 15000 });
 await call("/api/chains/signals");
+await call("/api/chains/launch");
 
 const log = (await fetch(new URL("/api/events?limit=12", url)).then((response) => response.json())) as {
   events: Array<{ dept: string; status: string; summary: string }>;
