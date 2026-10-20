@@ -463,6 +463,19 @@ class OrchestratorTests(unittest.TestCase):
         self.assertNotIn("Bearer", text)
         self.assertNotIn("Z" * 301, text)
 
+    def test_heuristic_plan_matches_hr_and_data_as_words(self):
+        text = (
+            "Coordinate all departments: research a trend, draft marketing, sales outreach, "
+            "support, engineering, ops, finance margin, legal review, HR, design, data and QA check"
+        )
+        plan = orch.heuristic_plan(text, 13)
+        depts = [t["dept"] for t in plan["tasks"]]
+        self.assertEqual(len(plan["tasks"]), 12)
+        self.assertIn("hr", depts)
+        self.assertIn("integrations", depts)
+        three = orch.heuristic_plan("three throughput", 13)
+        self.assertNotIn("hr", [t["dept"] for t in three["tasks"]])
+
     def test_sources_are_grok_only(self):
         """Fail if any orchestrator file names another provider or its API host."""
         needles = (

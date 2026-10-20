@@ -83,8 +83,8 @@ _KEYWORD_DEPTS = (
     ("engineering", ("engineering", "bug", "implement", "build the", "listing")),
     ("finance", ("finance", "margin", "invoice", "revenue")),
     ("legal", ("legal", "contract", "compliance", "terms of")),
-    ("integrations", ("integration", "webhook", "connector")),
-    ("hr", ("hire", "hiring", "candidate", "recruit")),
+    ("integrations", ("integration", "webhook", "connector", "data")),
+    ("hr", ("hire", "hiring", "candidate", "recruit", "hr")),
     ("design", ("design", "logo", "brand kit", "visual")),
     ("ops", ("ops", "fulfill", "anomaly", "order")),
     ("qa", ("qa", "quality check", "approval gate")),
@@ -406,7 +406,7 @@ def heuristic_plan(text: str, max_tasks: int) -> dict:
         }
     tasks = []
     for dept, words in _KEYWORD_DEPTS:
-        if any(w in text_l for w in words):
+        if any(re.search(rf"\b{re.escape(w)}", text_l) for w in words):
             approval = dept in ("legal", "finance") or any(w in text_l for w in _APPROVAL_WORDS)
             tasks.append({
                 "dept": dept,
