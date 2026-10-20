@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { runCustomerGate } from "./contract/gate.js";
+import { grokText } from "./grok.js";
 import { newId } from "./ids.js";
 import { planIssue } from "./engineering/bot.js";
 import { draftOutreach, findLeads } from "./sales/bot.js";
@@ -97,19 +98,32 @@ export async function chainLaunch(ctx: ServiceCtx, input: { parentId?: string; t
     output: { kind: "product_created", product: "Pulse Studio" },
   });
   const pageId = newId("page");
+  let copy = PULSE_COPY;
+  let copyMode: "live" | "mock" = "mock";
+  try {
+    const drafted = await grokText(
+      "Write one plain sentence describing Pulse Studio, a one-page product site for a small team. No prices, no email, no phone, no promises.",
+    );
+    if (drafted.mode === "live" && drafted.text.length > 12) {
+      copy = drafted.text;
+      copyMode = "live";
+    }
+  } catch {
+    copyMode = "mock";
+  }
   const page = await runCustomerGate({
     client: engineering,
     taskId: pageId,
     parentId: productId,
     kind: "public_post",
-    content: PULSE_COPY,
+    content: copy,
     summary: "Checking the Pulse Studio landing page",
     deliver: "handoff",
     timeoutMs: input.timeoutMs,
     send: async () => {
       const dir = path.join(ctx.dataDir, "pulse");
       await mkdir(dir, { recursive: true });
-      const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Pulse Studio</title></head><body><main><h1>Pulse Studio</h1><p>${PULSE_COPY}</p><p><a href="/panel">Ask support a question</a></p></main></body></html>`;
+      const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Pulse Studio</title></head><body><main><h1>Pulse Studio</h1><p>${copy}</p><p class="mode">${copyMode === "live" ? "LIVE" : "MOCK"}</p><p><a href="/panel">Ask support a question</a></p></main></body></html>`;
       await writeFile(path.join(dir, "index.html"), html);
       return { page: "/pulse" };
     },
@@ -140,6 +154,7 @@ export async function chainLaunch(ctx: ServiceCtx, input: { parentId?: string; t
     support_task_id: buyer.task_id,
     qa_passed: page.verdict === "pass",
     listing_live: true,
+    copy_mode: copyMode,
   };
 }
 

@@ -8,6 +8,7 @@ import { chainBug, chainChurn, chainLaunch, chainLead, chainShipped, chainSignal
 import {
   actorFor,
   assertAllowedPort,
+  DEFAULT_DEPARTMENTS_URL,
   DEFAULT_PORT,
   DEPTS,
   isDept,
@@ -698,7 +699,7 @@ export async function start(port = Number(process.env.WEBHOOK_PORT ?? DEFAULT_PO
   assertAllowedPort(port);
   const dataDir = path.join(process.cwd(), "data");
   let selfUrl = "";
-  const departments = () => process.env.DEPARTMENTS_BASE_URL?.trim() || "http://localhost:8810";
+  const departments = () => process.env.DEPARTMENTS_BASE_URL?.trim() || DEFAULT_DEPARTMENTS_URL;
   const dashboard = () => process.env.DASHBOARD_BASE_URL?.trim() || departments();
   const app = createApp({ dataDir, getSelfUrl: () => selfUrl, getDepartmentsUrl: departments, getDashboardUrl: dashboard });
   selfUrl = await listen(app.server, port);
