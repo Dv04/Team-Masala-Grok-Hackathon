@@ -11,7 +11,7 @@ export function useEngineeringAdapters(next: EngineeringAdapters): void {
 
 export async function planIssue(
   ctx: ServiceCtx,
-  input: { issue?: Issue; parentId?: string } = {},
+  input: { issue?: Issue; parentId?: string; timeoutMs?: number } = {},
 ): Promise<Record<string, unknown>> {
   const client = ctx.clientFor("engineering");
   const taskId = newId("plan");
@@ -47,6 +47,7 @@ export async function planIssue(
     content: planText,
     summary: "Checking the task plan",
     deliver: "handoff",
+    timeoutMs: input.timeoutMs,
     send: async () => ({ conversation_id: conversation.conversation_id, steps, issue_number: issue.number }),
   });
   let hireTask: string | undefined;

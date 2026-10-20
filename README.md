@@ -33,3 +33,15 @@ DEPARTMENTS_BASE_URL=http://127.0.0.1:8810 DASHBOARD_BASE_URL=http://127.0.0.1:8
 `npm test` runs the in-process mock. If `http://127.0.0.1:8810/health` reports `service: dev4-departments`, the live test also registers `sales`, `support`, and `engineering` with `POST /api/webhooks` and checks that their events show up for the dashboard tiles. `npm run demo` runs the mock chains on 8811.
 
 Pulse Studio is `POST /api/chains/launch`: a `product_created` event, a QA-checked landing page at `GET /pulse`, a sales event with `output.kind: listing_live`, and a support reply to a buyer. Each step keeps `parent_id`.
+
+Grok stays labeled `MOCK` until the demo host has a real key. Set these for live copy (token prices below are estimates for `grok-4.3` short context and can be overridden with `XAI_PRICE_INPUT_PER_M`, `XAI_PRICE_CACHED_PER_M`, and `XAI_PRICE_OUTPUT_PER_M`):
+
+```bash
+XAI_API_KEY=xai-...
+XAI_BUDGET_USD=2
+XAI_MODEL=grok-4.3
+XAI_BASE_URL=https://api.x.ai/v1
+XAI_MAX_OUTPUT_TOKENS=120
+```
+
+`XAI_API_KEY` must start with `xai-`. `XAI_BUDGET_USD` defaults to 2. Once the running total in `data/xai-budget.json` would pass that cap, calls stop and the reply falls back to labeled MOCK. `XAI_BASE_URL` defaults to `https://api.x.ai/v1` so a spend-limit proxy can replace the host.
