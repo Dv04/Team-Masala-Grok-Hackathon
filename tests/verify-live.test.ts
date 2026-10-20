@@ -6,10 +6,12 @@ import { DepartmentClient } from "../src/contract/client.js";
 import { runCustomerGate } from "../src/contract/gate.js";
 import { followEventStream } from "../src/contract/client.js";
 import { createApp, listen, registerWebhooks } from "../src/server.js";
+import { liveSuitesEnabled } from "./live-gate.js";
 
 const timings: Array<{ check: string; ms: number; pass: boolean }> = [];
 
 async function liveBase(): Promise<string | null> {
+  if (!liveSuitesEnabled()) return null;
   try {
     const response = await fetch("http://127.0.0.1:8810/health", { signal: AbortSignal.timeout(800) });
     if (!response.ok) return null;
