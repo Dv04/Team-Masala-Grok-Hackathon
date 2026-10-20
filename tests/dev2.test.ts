@@ -262,6 +262,45 @@ it("turns a design listing_live webhook into sales, engineering, and support fol
   expect(JSON.stringify(events)).not.toContain("@");
 });
 
+it("counts an accepted sales webhook on status and the panel", async () => {
+  const url = await boot();
+  const posted = await post(url, "/api/webhooks/inbound", {
+    dept: "sales",
+    task_id: "sales-inbound-count",
+    actor: "hub",
+    status: "done",
+    summary: "Inbound sales lead arrived",
+    mode: "mock",
+    output: { kind: "note" },
+  });
+  expect(posted.status).toBe(202);
+
+  const status = (await fetch(new URL("/api/status?dept=sales", url)).then((response) => response.json())) as {
+    event_count: number;
+  };
+  expect(status.event_count).toBeGreaterThan(0);
+
+  const panel = (await fetch(new URL("/api/panel/state", url)).then((response) => response.json())) as {
+    events: Array<{ dept: string; task_id: string; summary: string }>;
+  };
+  expect(
+    panel.events.some(
+      (event) => event.dept === "sales" && event.task_id === "sales-inbound-count" && event.summary === "Inbound sales lead arrived",
+    ),
+  ).toBe(true);
+
+  const malformed = await post(url, "/api/webhooks/inbound", {
+    dept: "sales",
+    task_id: "sales-inbound-extra",
+    actor: "hub",
+    status: "done",
+    summary: "Has an extra field",
+    mode: "mock",
+    extra: true,
+  });
+  expect(malformed.status).toBe(202);
+});
+
 it("accepts a foreign source dept and answers only when the event is for us", async () => {
   const url = await boot();
   const finance = await post(url, "/api/webhooks/inbound", {
