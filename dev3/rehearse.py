@@ -46,7 +46,7 @@ def build_chain(run=None, trend="Sleepy office cats"):
         ev("sales", l, "Listing live: Pulse Studio", {"kind": "listing_live", "product": "Pulse Studio", "url": "/pulse",
            "price": 49, "root_id": t}, p),
         ev("ops", o1, "Order placed: 2 x $49 (cost $14/unit)", {"kind": "order_placed", "qty": 2, "price_usd": 49,
-           "cost_usd": 14, "provider": "MOCK print-on-demand", "root_id": t}, l),
+           "unit_cost_usd": 14, "cost_usd": 28, "provider": "MOCK print-on-demand", "root_id": t}, l),
         ev("ops", o2, "Order placed: 1 x $49 (no cost on order)", {"kind": "order_placed", "qty": 1, "price_usd": 49,
            "provider": "MOCK print-on-demand", "root_id": t}, l),
     ]

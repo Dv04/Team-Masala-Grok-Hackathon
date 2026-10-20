@@ -113,7 +113,8 @@ class RehearseTests(unittest.TestCase):
         self.assertEqual([e["output"]["kind"] for e in c],
                          ["trend_spotted", "product_created", "listing_live", "order_placed", "order_placed"])
         self.assertEqual(c[2]["output"]["price"], 49)
-        self.assertIn("cost_usd", c[3]["output"]); self.assertNotIn("cost_usd", c[4]["output"])
+        self.assertEqual((c[3]["output"]["unit_cost_usd"], c[3]["output"]["cost_usd"]), (14, 28))  # hub: cost_usd = order total
+        self.assertNotIn("cost_usd", c[4]["output"])
         for e in c:
             self.assertFalse(e["actor"].startswith("dev3-"))  # agent.py skips its own dev3-* events
             self.assertTrue(set(e) <= {"ts", "dept", "task_id", "status", "summary", "mode", "parent_id", "actor", "output", "needs_approval"})
