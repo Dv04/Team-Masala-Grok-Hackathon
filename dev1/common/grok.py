@@ -1,9 +1,24 @@
 """xAI Responses API only. Host is fixed. No call is made when XAI_API_KEY is empty."""
+import json
+import logging
+
 import httpx
 
 from .config import Settings, load_settings
 
 XAI_BASE = "https://api.x.ai/v1"
+log = logging.getLogger("grok")
+
+
+def _error_body(data, secret: str = "") -> str:
+    """Truncated response body for logs. Never includes the API key."""
+    if isinstance(data, (dict, list)):
+        text = json.dumps(data, default=str)
+    else:
+        text = "" if data is None else str(data)
+    if secret:
+        text = text.replace(secret, "[redacted]")
+    return text[:300]
 
 
 class GrokError(Exception):
@@ -61,6 +76,7 @@ class GrokClient:
         else:
             status, data = self._post(url, payload, timeout)
         if status >= 400:
+            log.warning("xAI responses HTTP %s: %s", status, _error_body(data, self.settings.xai_api_key))
             raise GrokError(f"xAI responses HTTP {status}")
         if not isinstance(data, dict):
             raise GrokError("xAI responses returned a non-object")
@@ -79,8 +95,9 @@ class GrokClient:
             )
         except httpx.HTTPError as exc:
             raise GrokError(f"xAI unreachable: {type(exc).__name__}") from None
+        raw = resp.text or ""
         try:
             data = resp.json()
         except ValueError:
-            data = {}
+            data = {"error": raw[:300]}
         return resp.status_code, data
