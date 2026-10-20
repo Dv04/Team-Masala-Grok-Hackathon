@@ -68,3 +68,49 @@ it("keeps Grok labeled MOCK without an xai- key and under the budget cap", async
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+it("warns once on an xAI error and asks for about 200 tokens", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "xai-error-"));
+  try {
+    const key = "xai-supersecretkeyvalue";
+    process.env.XAI_API_KEY = key;
+    process.env.XAI_BUDGET_USD = "2";
+    process.env.XAI_BUDGET_PATH = join(dir, "budget.json");
+    process.env.XAI_BASE_URL = "https://proxy.example/v1";
+    delete process.env.XAI_MAX_OUTPUT_TOKENS;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: `overloaded ${key}` } }), { status: 503 }),
+    );
+    const failed = await grokText("Write a listing sentence");
+    expect(failed.mode).toBe("mock");
+    expect(failed.text.startsWith("MOCK Grok:")).toBe(true);
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe("https://proxy.example/v1/responses");
+    const sent = JSON.parse(String((fetchSpy.mock.calls[0]?.[1] as RequestInit).body));
+    expect(sent.max_output_tokens).toBe(200);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const line = String(warn.mock.calls[0]?.[0]);
+    expect(line).toContain("503");
+    expect(line).toContain("overloaded");
+    expect(line).not.toContain(key);
+
+    fetchSpy.mockImplementation((_url, init) => {
+      return new Promise((_resolve, reject) => {
+        const signal = (init as RequestInit | undefined)?.signal;
+        const fail = () => {
+          const error = new Error("The operation was aborted due to timeout");
+          error.name = "TimeoutError";
+          reject(error);
+        };
+        if (signal?.aborted) fail();
+        else signal?.addEventListener("abort", fail, { once: true });
+      });
+    });
+    const timed = await grokText("slow", { timeoutMs: 40 });
+    expect(timed.mode).toBe("mock");
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(String(warn.mock.calls[1]?.[0])).toContain("408");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

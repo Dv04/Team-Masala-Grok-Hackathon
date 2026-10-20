@@ -8,7 +8,7 @@ export const GROK_MOCK_TEXT =
 const DEFAULT_BASE = "https://api.x.ai/v1";
 const DEFAULT_MODEL = "grok-4.3";
 const DEFAULT_BUDGET_USD = 2;
-const DEFAULT_MAX_OUTPUT = 120;
+const DEFAULT_MAX_OUTPUT = 200;
 
 /** Published grok-4.3 short-context rates, USD per 1M tokens. Estimates; override with XAI_PRICE_*_PER_M. */
 const DEFAULT_PRICE_INPUT = 1.25;
@@ -61,7 +61,27 @@ function mock(note?: string): { text: string; mode: "mock"; note?: string } {
   return note ? { text, mode: "mock", note } : { text, mode: "mock" };
 }
 
-export async function grokText(prompt: string): Promise<{ text: string; mode: "live" | "mock"; note?: string }> {
+function warnXai(status: number, message: string, key: string): void {
+  let text = message || "xAI request failed";
+  if (key) text = text.split(key).join("[redacted]");
+  text = text.replace(/Bearer\s+\S+/gi, "Bearer [redacted]");
+  text = text.replace(/\s+/g, " ").trim().slice(0, 240);
+  console.warn(`xAI ${status}: ${text || "xAI request failed"}`);
+}
+
+async function xaiErrorMessage(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: { message?: string }; message?: string };
+    return body.error?.message || body.message || response.statusText || "xAI request failed";
+  } catch {
+    return response.statusText || "xAI request failed";
+  }
+}
+
+export async function grokText(
+  prompt: string,
+  options: { timeoutMs?: number } = {},
+): Promise<{ text: string; mode: "live" | "mock"; note?: string }> {
   const key = process.env.XAI_API_KEY?.trim() ?? "";
   if (!key.startsWith("xai-")) return mock();
   const cap = num(process.env.XAI_BUDGET_USD, DEFAULT_BUDGET_USD);
@@ -73,14 +93,18 @@ export async function grokText(prompt: string): Promise<{ text: string; mode: "l
   }
   const base = (process.env.XAI_BASE_URL?.trim() || DEFAULT_BASE).replace(/\/$/, "");
   const model = process.env.XAI_MODEL?.trim() || DEFAULT_MODEL;
+  const timeoutMs = options.timeoutMs ?? 20_000;
   try {
     const response = await fetch(`${base}/responses`, {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
       body: JSON.stringify({ model, input: prompt, max_output_tokens: maxOutput }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!response.ok) return mock();
+    if (!response.ok) {
+      warnXai(response.status, await xaiErrorMessage(response), key);
+      return mock();
+    }
     const body = (await response.json()) as {
       output_text?: string;
       output?: Array<{ content?: Array<{ text?: string }> }>;
@@ -107,10 +131,15 @@ export async function grokText(prompt: string): Promise<{ text: string; mode: "l
       .join("")
       .trim();
     const text = (body.output_text ?? nested ?? "").trim();
-    if (!text) return mock();
+    if (!text) {
+      warnXai(response.status, "xAI responses returned no text", key);
+      return mock();
+    }
     return { text, mode: "live" };
   } catch (error) {
-    console.error("xAI call failed; using MOCK", error instanceof Error ? error.message : error);
+    const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    const message = error instanceof Error ? error.message : "xAI request failed";
+    warnXai(timedOut ? 408 : 0, message, key);
     return mock();
   }
 }
