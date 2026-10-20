@@ -347,10 +347,31 @@ it("completes an orchestrator sales task on the same task id", async () => {
   }
   expect(done?.dept).toBe("sales");
   expect(done?.actor).toBe("sales-bot");
-  expect(done?.parent_id).toBe("req-1a85a6c9");
+  expect(done?.parent_id).toBe("sales-70885544");
   expect(done?.output?.source).toBe("orchestrator");
   expect(done?.output?.request_id).toBe("req-1a85a6c9");
   expect(done?.mode).toBe("mock");
+
+  const bare = await post(url, "/api/webhooks/inbound", {
+    task_id: "engineering-bare-1",
+    dept: "engineering",
+    title: "Fix the upload timeout",
+    detail: { text: "Uploader times out", source: "orchestrator" },
+    status: "queued",
+  });
+  expect(bare.status).toBe(202);
+  const bareStarted = Date.now();
+  let bareDone: { task_id?: string; parent_id?: string; status?: string; dept?: string; actor?: string; output?: { title?: string } } | undefined;
+  while (Date.now() - bareStarted < 12000) {
+    const body = (await fetch(new URL("/api/events?limit=40", url)).then((res) => res.json())) as { events: Array<typeof bareDone> };
+    bareDone = body.events.find((event) => event?.task_id === "engineering-bare-1" && event.status === "done");
+    if (bareDone) break;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+  expect(bareDone?.dept).toBe("engineering");
+  expect(bareDone?.actor).toBe("engineering-bot");
+  expect(bareDone?.parent_id).toBe("engineering-bare-1");
+  expect(bareDone?.output?.title).toContain("timeout");
 
   const ignored = await post(url, "/api/webhooks/inbound", {
     dept: "finance",
@@ -363,7 +384,7 @@ it("completes an orchestrator sales task on the same task id", async () => {
   });
   expect(ignored.status).toBe(200);
   expect(ignored.json).toMatchObject({ ok: true, ignored: true });
-});
+}, 25000);
 
 it("returns 202 while a lead chain waits for the founder", async () => {
   const url = await boot();
