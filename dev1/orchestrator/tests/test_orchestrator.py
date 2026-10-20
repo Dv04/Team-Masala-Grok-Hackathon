@@ -289,6 +289,180 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(captured["model"], "grok-4")
         self.assertTrue(captured["url"].startswith("https://api.x.ai/v1/"))
 
+    def test_default_max_tasks_is_13(self):
+        self.assertEqual(orch.DEFAULT_MAX_TASKS, 13)
+        self.assertEqual(make_orch(FakeService()).max_tasks, 13)
+        args = orch.build_parser().parse_args(["request", "hello"])
+        self.assertEqual(args.max_tasks, 13)
+        text = (
+            "research the market, write marketing content, email sales leads, "
+            "answer a support ticket, engineering should build the listing, "
+            "check finance margin, review the contract, and design a logo"
+        )
+        fake = FakeService()
+        out = make_orch(fake).submit(text)
+        self.assertEqual(out["budget"]["max_tasks"], 13)
+        self.assertGreater(len(fake.tasks), 6)
+
+    def _pulse_planner(self):
+        return lambda text, max_tasks: {
+            "intent": "pulse", "summary": "pulse", "planner": "mock",
+            "tasks": [{"dept": "research", "title": "Spot trend", "detail": "emit trend_spotted", "needs_approval": False}],
+        }
+
+    def test_pulse_passes_live_trend_when_key_set(self):
+        os.environ["XAI_API_KEY"] = "unit-test-key"
+        fake = FakeService(pulse_status=200)
+        seen = {}
+
+        def fake_lookup(query, timeout=45):
+            seen["timeout"] = timeout
+            seen["query"] = query
+            return {"trend": "Pixel frogs", "why": "X wants frog stickers.", "source": "x", "mode": "live"}
+
+        original = orch.lookup_live_trend
+        orch.lookup_live_trend = fake_lookup
+        try:
+            out = make_orch(fake, planner=self._pulse_planner()).pulse("Launch something on what's trending today")
+        finally:
+            orch.lookup_live_trend = original
+        body = fake.pulse_calls[0]
+        self.assertEqual(seen["timeout"], orch.TREND_LOOKUP_TIMEOUT)
+        self.assertLessEqual(seen["timeout"], 50)
+        self.assertEqual(body["trend"], "Pixel frogs")
+        self.assertEqual(body["why"], "X wants frog stickers.")
+        self.assertEqual(body["source"], "x")
+        self.assertEqual(body["mode"], "live")
+        self.assertEqual(out["pulse"]["pulse_start"], "ok")
+
+    def test_pulse_trend_failure_falls_back_to_backup(self):
+        os.environ["XAI_API_KEY"] = "unit-test-key"
+        fake = FakeService(pulse_status=200)
+
+        def fake_lookup(query, timeout=45):
+            raise TimeoutError("slow")
+
+        original = orch.lookup_live_trend
+        orch.lookup_live_trend = fake_lookup
+        try:
+            make_orch(fake, planner=self._pulse_planner()).pulse("Launch something on what's trending today")
+        finally:
+            orch.lookup_live_trend = original
+        body = fake.pulse_calls[0]
+        self.assertEqual(body.get("source"), "backup")
+        self.assertNotIn("trend", body)
+
+    def test_pulse_without_key_does_not_call_grok_trend(self):
+        fake = FakeService(pulse_status=404)
+        called = []
+        original = orch.lookup_live_trend
+        orch.lookup_live_trend = lambda *a, **k: called.append(1)
+        try:
+            make_orch(fake).pulse("Launch something on what's trending today")
+        finally:
+            orch.lookup_live_trend = original
+        self.assertEqual(called, [])
+        self.assertEqual(fake.pulse_calls[0].get("source"), "backup")
+        self.assertNotIn("trend", fake.pulse_calls[0])
+
+    def test_lookup_live_trend_parses_grok_and_ignores_failure(self):
+        os.environ["XAI_API_KEY"] = "unit-test-key"
+        os.environ["GROK_TEXT_MODEL"] = "grok-4"
+        dev1 = str(ROOT.parent)
+        if dev1 not in sys.path:
+            sys.path.insert(0, dev1)
+        import common.grok as grok_mod
+
+        captured = {}
+
+        class FakeClient:
+            def __init__(self, settings, sender=None):
+                self.settings = settings
+
+            def respond(self, prompt, tools=None, fast=False, timeout=50):
+                captured["tools"] = tools
+                captured["timeout"] = timeout
+                captured["prompt"] = prompt
+                if captured.get("fail"):
+                    raise grok_mod.GrokError("xAI responses HTTP 500")
+                text = captured.get("text") or '{"trend":"Orbit cats","why":"They took over the timeline."}'
+                return grok_mod.GrokResult(text, "live", "grok-4", False)
+
+        original = grok_mod.GrokClient
+        grok_mod.GrokClient = FakeClient
+        try:
+            found = orch.lookup_live_trend("frog stickers")
+            self.assertEqual(found["trend"], "Orbit cats")
+            self.assertEqual(found["why"], "They took over the timeline.")
+            self.assertEqual(found["source"], "x")
+            self.assertEqual(found["mode"], "live")
+            self.assertEqual([t["type"] for t in captured["tools"]], ["x_search", "web_search"])
+            self.assertLessEqual(captured["timeout"], 45)
+            self.assertIn("x_search", captured["prompt"])
+            captured["fail"] = True
+            self.assertIsNone(orch.lookup_live_trend("again"))
+            captured["fail"] = False
+            captured["text"] = "not json"
+            self.assertIsNone(orch.lookup_live_trend("again"))
+        finally:
+            grok_mod.GrokClient = original
+            os.environ.pop("GROK_TEXT_MODEL", None)
+
+    def test_grok_plan_logs_status_and_truncated_body_without_key(self):
+        os.environ["XAI_API_KEY"] = "unit-test-key"
+        secret = "unit-test-key"
+
+        def fake_http(method, url, body=None, timeout=10, headers=None):
+            self.assertTrue(url.startswith("https://api.x.ai/v1/"))
+            return 429, {"error": "slow down " + secret + ("E" * 400)}
+
+        original = orch._http_json
+        orch._http_json = fake_http
+        try:
+            with self.assertLogs("orchestrator", level="WARNING") as cm:
+                plan = orch.grok_plan("check the market", 3, 3, [0])
+        finally:
+            orch._http_json = original
+        self.assertIsNone(plan)
+        text = "\n".join(cm.output)
+        self.assertIn("429", text)
+        self.assertIn("slow down", text)
+        self.assertNotIn(secret, text)
+        self.assertNotIn("Bearer", text)
+        self.assertNotIn("Authorization", text)
+        self.assertNotIn("E" * 301, text)
+
+    def test_grok_client_logs_http_error_without_key_or_headers(self):
+        dev1 = str(ROOT.parent)
+        if dev1 not in sys.path:
+            sys.path.insert(0, dev1)
+        from common.config import Settings
+        from common.grok import GrokClient, GrokError
+
+        secret = "super-secret-key"
+
+        def sender(url, payload, key):
+            self.assertEqual(url, "https://api.x.ai/v1/responses")
+            return 503, {"error": "nope " + secret + ("Z" * 400)}
+
+        settings = Settings(
+            xai_api_key=secret,
+            text_model="grok-4",
+            fast_model="grok-4",
+            image_model="grok-imagine-image-2.0",
+            departments_base_url="http://127.0.0.1:8810",
+        )
+        with self.assertLogs("grok", level="WARNING") as cm:
+            with self.assertRaises(GrokError):
+                GrokClient(settings, sender=sender).respond("find a trend", tools=[{"type": "x_search"}])
+        text = "\n".join(cm.output)
+        self.assertIn("503", text)
+        self.assertIn("nope", text)
+        self.assertNotIn(secret, text)
+        self.assertNotIn("authorization", text.lower())
+        self.assertNotIn("Bearer", text)
+        self.assertNotIn("Z" * 301, text)
+
     def test_sources_are_grok_only(self):
         """Fail if any orchestrator file names another provider or its API host."""
         needles = (

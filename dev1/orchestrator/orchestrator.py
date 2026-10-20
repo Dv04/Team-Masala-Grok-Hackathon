@@ -41,6 +41,8 @@ STATUSES = ("queued", "running", "needs_approval", "approved", "rejected", "done
 XAI_BASE = os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/")
 SERVICE = os.environ.get("DEPT_SERVICE_URL", "http://127.0.0.1:8810").rstrip("/")
 ORCH_PORT = int(os.environ.get("ORCH_PORT", "8820"))
+DEFAULT_MAX_TASKS = 13
+TREND_LOOKUP_TIMEOUT = 45
 ACTOR = "dev1-orchestrator"
 SECRET_RE = re.compile(
     r"(xai-[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,})"
@@ -139,6 +141,72 @@ def is_pulse_text(text: str) -> bool:
     t = (text or "").lower()
     keys = ("pulse studio", "pulse", "what's trending", "whats trending", "what is trending", "trending today")
     return any(k in t for k in keys)
+
+
+def _trend_prompt(query: str) -> str:
+    return (
+        "You are Pulse Studio research. Use x_search to find one thing trending on X "
+        "that can become a sticker, a tee, or a poster.\n"
+        'Return ONLY JSON: {"trend": "short name", "why": "one sentence"}.\n'
+        "No prices, no discounts, no email addresses, no phone numbers, no guarantees.\n"
+        f"Hint: {query}"
+    )
+
+
+def _parse_trend_text(text: str) -> tuple[str, str] | None:
+    if not text:
+        return None
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.I)
+    match = re.search(r"\{.*\}", cleaned, re.S)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    trend = scrub(str(data.get("trend") or ""), 80)
+    why = scrub(str(data.get("why") or ""), 200)
+    if not trend or not why or "[redacted]" in trend:
+        return None
+    return trend, why
+
+
+def lookup_live_trend(query: str, timeout: float = TREND_LOOKUP_TIMEOUT) -> dict | None:
+    """Ask Grok for one trend via common.grok. None on no key, bad reply, or error.
+
+    Does not post events. A hit is {trend, why, source: "x", mode: "live"}.
+    The HTTP call is capped at TREND_LOOKUP_TIMEOUT seconds.
+    """
+    dev1 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        if dev1 not in sys.path:
+            sys.path.insert(0, dev1)
+        from common.config import load_settings
+        from common.grok import GrokClient, GrokError
+    except Exception as exc:
+        log.warning("trend lookup import failed: %s", type(exc).__name__)
+        return None
+    try:
+        settings = load_settings()
+        if not settings.live:
+            return None
+        result = GrokClient(settings).respond(
+            _trend_prompt(query or "what people on X want as a sticker, tee, or poster right now"),
+            tools=[{"type": "x_search"}, {"type": "web_search"}],
+            timeout=min(float(timeout or TREND_LOOKUP_TIMEOUT), TREND_LOOKUP_TIMEOUT),
+        )
+    except (GrokError, OSError, ValueError, TimeoutError) as exc:
+        log.warning("live trend lookup failed: %s", type(exc).__name__)
+        return None
+    if getattr(result, "mode", None) != "live":
+        return None
+    parsed = _parse_trend_text(getattr(result, "text", "") or "")
+    if not parsed:
+        return None
+    trend, why = parsed
+    return {"trend": trend, "why": why, "source": "x", "mode": "live"}
 
 
 def _http_json(method: str, url: str, body: dict | None = None, timeout: float = 10,
@@ -249,9 +317,9 @@ class DeptClient:
     def pulse_start(self, request_text: str, parent_id: str) -> tuple[str, Any]:
         """Ask the department service to start the Pulse chain. 404/405 => unavailable.
 
-        Body matches departments POST /api/pulse/start: no trend means the service
-        emits research trend_spotted from its backup list (source backup). We do
-        not invent an X trend here.
+        Body matches departments POST /api/pulse/start (trend, why, source).
+        With XAI_API_KEY, ask Grok first and pass that trend. On any error,
+        timeout, empty reply, or no key, keep the backup body (no trend).
         """
         body = {
             "why": scrub(request_text, 200) or "founder asked for what is trending today",
@@ -259,6 +327,25 @@ class DeptClient:
             "parent_id": parent_id,
             "actor": ACTOR,
         }
+        if os.environ.get("XAI_API_KEY"):
+            try:
+                found = lookup_live_trend(request_text, timeout=TREND_LOOKUP_TIMEOUT)
+            except Exception as exc:
+                log.warning("live trend lookup failed, using backup: %s", type(exc).__name__)
+                found = None
+            if isinstance(found, dict):
+                trend_s = scrub(str(found.get("trend") or ""), 80)
+                why_s = scrub(str(found.get("why") or ""), 200)
+                src = found.get("source") if found.get("source") in ("x", "backup", "manual") else "x"
+                if trend_s and why_s:
+                    body = {
+                        "trend": trend_s,
+                        "why": why_s,
+                        "source": src,
+                        "mode": "live" if src == "x" else "mock",
+                        "parent_id": parent_id,
+                        "actor": ACTOR,
+                    }
         try:
             code, data = self._call("POST", "/api/pulse/start", body, timeout=5)
         except Exception as e:  # network: service up for other routes, this one missing
@@ -387,9 +474,14 @@ def grok_plan(text: str, max_tasks: int, max_calls: int, calls: list[int]) -> di
             "POST", f"{XAI_BASE}/chat/completions", body, timeout=30,
             headers={"Authorization": "Bearer " + key},
         )
-    except Exception:
+    except Exception as exc:
+        log.warning("xAI chat completions failed: %s", type(exc).__name__)
         return None
     if code != 200 or not isinstance(data, dict):
+        err = data if isinstance(data, str) else (json.dumps(data, default=str) if data is not None else "")
+        if key:
+            err = str(err).replace(key, "[redacted]")
+        log.warning("xAI chat completions HTTP %s: %s", code, str(err)[:300])
         return None
     try:
         content = data["choices"][0]["message"]["content"]
@@ -446,7 +538,7 @@ def normalize_plan(plan: dict, max_tasks: int, source_text: str) -> dict:
 
 
 class Orchestrator:
-    def __init__(self, client: DeptClient | None = None, max_tasks: int = 6, max_grok_calls: int = 3,
+    def __init__(self, client: DeptClient | None = None, max_tasks: int = DEFAULT_MAX_TASKS, max_grok_calls: int = 3,
                  planner: Callable[[str, int], dict] | None = None):
         self.client = client or DeptClient()
         self.max_tasks = max(1, int(max_tasks))
@@ -870,23 +962,27 @@ def serve(port: int = ORCH_PORT) -> None:
         httpd.shutdown()
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Team Masala orchestrator / chief of staff")
     sub = p.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("request", help="decompose a founder request and route it")
     r.add_argument("text")
-    r.add_argument("--max-tasks", type=int, default=6)
+    r.add_argument("--max-tasks", type=int, default=DEFAULT_MAX_TASKS)
     u = sub.add_parser("pulse", help="kick off the Pulse Studio chain via research + /api/pulse/start")
     u.add_argument("text", nargs="?", default="Launch something on what's trending today")
     s = sub.add_parser("status", help="re-read /api/events for a request and retry failures once")
     s.add_argument("request_id")
     sv = sub.add_parser("serve", help="HTTP on 127.0.0.1 (default port 8820)")
     sv.add_argument("--port", type=int, default=ORCH_PORT)
-    args = p.parse_args(argv)
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     if args.cmd == "serve":
         serve(args.port)
         return 0
-    orch = Orchestrator(max_tasks=getattr(args, "max_tasks", 6))
+    orch = Orchestrator(max_tasks=getattr(args, "max_tasks", DEFAULT_MAX_TASKS))
     try:
         if args.cmd == "request":
             out = orch.submit(args.text)
