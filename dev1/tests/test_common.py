@@ -1,6 +1,9 @@
 """Offline tests for the shared client. No network."""
 import os
+import sys
 import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from common.config import Settings, load_settings
 from common.events import EventError, EventsClient, redact

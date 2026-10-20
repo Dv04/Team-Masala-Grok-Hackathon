@@ -13,7 +13,7 @@ Ordered checklist for [PLAN.md](PLAN.md). Marketing and Orchestrator are **not**
 - [x] `GrokClient.respond` uses httpx against that host with caller-supplied tools. Mock (no HTTP) when `XAI_API_KEY` is absent. Does not send `stop` or presence/frequency penalties.
 - [x] A unit test scans `dev1/` and fails on another provider's model prefix or API host.
 - [x] `EventsClient.post_event` POSTs `/api/events`, omits `ts`, and will not send `mode: "live"` without a key.
-- [x] Offline tests in `dev1/common/test_offline.py`.
+- [x] Offline tests discovered by `python -m unittest discover -s tests` from `dev1/` (`requirements.txt` is `dev1/requirements.txt`).
 
 ## M2 — Trend bot `dev1/trend_bot/` (this PR) — demo critical path
 
@@ -22,7 +22,7 @@ Acceptance: one command posts dept `research`, status `done`, `output.kind=trend
 - [x] Stored backup trend fixture (sticker / tee / poster, no prices, no contact info).
 - [x] Live path: Grok `x_search` + `web_search`, JSON `trend` + `why`.
 - [x] Failed or missing Grok falls back to the fixture and stays `mock`.
-- [x] Offline tests in `dev1/trend_bot/test_offline.py`.
+- [x] Offline tests in `dev1/tests/test_trend.py`, same `discover -s tests` command.
 - [x] `python3 -m trend_bot` and `python3 trend_bot/smoke.py` against `DEPARTMENTS_BASE_URL`.
 
 ## M3 — Marketing bot `dev1/marketing_bot/` (other PR, not this branch)

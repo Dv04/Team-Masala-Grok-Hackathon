@@ -79,13 +79,13 @@ HTTP is `httpx` (`dev1/requirements.txt`). Mock mode is the default until a key 
 ## How to run
 
 ```bash
-# offline tests (no key, no server)
-cd dev1 && python3 -m pip install -r requirements.txt && python3 -m unittest discover -s . -p 'test_*.py'
+cd dev1
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests
 
-# one trend into a running departments service
-#   cd departments && .venv/bin/python server.py     # :8810
-cd dev1 && python3 -m trend_bot
-# or: python3 trend_bot/smoke.py
+# one trend into a running departments service (port 8810)
+python -m trend_bot
+python trend_bot/smoke.py
 ```
 
 Env (never commit the key):
@@ -109,7 +109,7 @@ Text calls go to `https://api.x.ai/v1/responses`. That host is not configurable.
 - Live HTTP failure or unusable JSON: backup, `mode=mock`.
 - `mode=live` without a key is coerced to `mock` before POST.
 - Email, phone, SSN, and key-like strings are redacted.
-- A file scan under `dev1/` fails if it finds another provider's model name or API host.
+- `python -m unittest discover -s tests` from `dev1/` (after `python -m pip install -r requirements.txt`). The provider scan fails if `dev1/` names another model host.
 
 ## Risks
 
