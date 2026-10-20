@@ -1,0 +1,2 @@
+Name: Marcus Lee (fictional)
+Backend engineer, 5 years Python and Go, Kubernetes, distributed systems. Some on-call experience. Interested in startups.
