@@ -103,7 +103,7 @@ def register(mcp, lock=None):
         else:
             try: b = await req.json()
             except Exception: b = {}
-            q, actor = (b or {}).get("question", ""), (b or {}).get("actor", "api")
+            q, actor = (b or {}).get("question") or (b or {}).get("q", ""), (b or {}).get("actor", "api")
         try: return JSONResponse(await asyncio.to_thread(ask, q, str(actor)[:60]))
         except ValueError as e: return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
