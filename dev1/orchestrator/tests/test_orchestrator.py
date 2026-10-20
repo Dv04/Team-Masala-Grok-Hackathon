@@ -6,6 +6,8 @@ import json
 import os
 import pathlib
 import sys
+import threading
+import time
 import unittest
 import uuid
 from urllib.parse import parse_qs, urlparse
@@ -17,12 +19,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class FakeService:
-    def __init__(self, pulse_status: int = 404, fail_depts: tuple[str, ...] = ()):
+    def __init__(self, pulse_status: int = 404, fail_depts: tuple[str, ...] = (), trend_task: str | None = None):
         self.events: list[dict] = []
         self.tasks: list[dict] = []
         self.pulse_calls: list[dict] = []
         self.pulse_status = pulse_status
         self.fail_depts = set(fail_depts)
+        self.trend_task = trend_task
 
     def __call__(self, method: str, url: str, body: dict | None):
         parsed = urlparse(url)
@@ -50,7 +53,10 @@ class FakeService:
             self.pulse_calls.append(dict(body or {}))
             if self.pulse_status >= 400:
                 return self.pulse_status, {"ok": False, "error": "not found"}
-            return 200, {"ok": True, "started": True}
+            data = {"ok": True, "started": True}
+            if self.trend_task:
+                data["trend_task"] = self.trend_task
+            return 200, data
         if method == "GET" and path == "/api/events":
             qs = parse_qs(parsed.query)
             evs = list(self.events)
@@ -129,6 +135,46 @@ class OrchestratorTests(unittest.TestCase):
         out = make_orch(fake, planner=planner).pulse("Launch something on what's trending today")
         self.assertEqual(out["pulse"]["pulse_start"], "ok")
         self.assertEqual([t["dept"] for t in fake.tasks], ["research"])
+
+    def test_pulse_trend_task_kicks_trend_bot_without_blocking(self):
+        fake = FakeService(pulse_status=200, trend_task="pulse-1")
+        calls = []
+        gate = threading.Event()
+
+        def fake_run(hub):
+            calls.append(hub)
+            gate.wait(2)
+
+        original = orch.run_trend_bot
+        orch.run_trend_bot = fake_run
+        os.environ.pop("ORCH_AUTO_RESEARCH", None)
+        try:
+            started = time.monotonic()
+            out = make_orch(fake).pulse("Launch something on what's trending today")
+            elapsed = time.monotonic() - started
+            gate.set()
+            deadline = time.monotonic() + 2
+            while not calls and time.monotonic() < deadline:
+                time.sleep(0.01)
+        finally:
+            gate.set()
+            orch.run_trend_bot = original
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(calls, ["http://127.0.0.1:8810"])
+        self.assertEqual(out["pulse"]["pulse_start"], "ok")
+        self.assertEqual(fake.tasks[0]["meta"].get("trend_task"), "pulse-1")
+
+        calls.clear()
+        os.environ["ORCH_AUTO_RESEARCH"] = "0"
+        orch.run_trend_bot = fake_run
+        try:
+            make_orch(FakeService(pulse_status=200, trend_task="pulse-2")).pulse(
+                "Launch something on what's trending today")
+            time.sleep(0.05)
+        finally:
+            orch.run_trend_bot = original
+            os.environ.pop("ORCH_AUTO_RESEARCH", None)
+        self.assertEqual(calls, [])
 
     def test_budget_cap(self):
         fake = FakeService()

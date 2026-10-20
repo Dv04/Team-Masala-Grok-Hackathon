@@ -94,6 +94,10 @@ class MarketingBot:
                 })
             if not is_listing_live(ev):
                 return None
+            # Launch only on design's listing_live. Sales/engineering echoes often omit
+            # listing_task, so the dept gate comes first; listing_task dedupe is the second guard.
+            if (ev.get("dept") or "") != "design":
+                return None
             key = listing_view(ev)["listing_task"]
             if not key or key in self.seen:
                 return None
@@ -179,7 +183,8 @@ class MarketingBot:
             verdict = self._qa(task_id, content, context, parent, mode)
         status, needs = _status_for(verdict)
         output = {
-            "needs_qa": True,
+            # /api/qa/check already ran above. False so the hub does not QA this post a second time.
+            "needs_qa": False,
             "kind": "public_post",
             "content": content,
             "context": context,

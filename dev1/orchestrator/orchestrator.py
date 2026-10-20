@@ -5,7 +5,10 @@ Takes a founder request, decomposes it with Grok structured output (or a labeled
 mock plan when XAI_API_KEY is absent), routes tasks through the shared
 department service, and tracks them. The Pulse Studio chain is self-driving
 once research emits `trend_spotted` or `/api/pulse/start` accepts the kickoff:
-this process only starts that chain and reports status. It does not re-route
+this process only starts that chain and reports status. After it creates the
+research task that carries meta.trend_task, it runs trend_bot once in the
+background so that task does not stay queued (ORCH_AUTO_RESEARCH=0 disables).
+It does not re-route
 design, QA, listing, marketing, ops, or finance steps the chain already owns.
 
 Stdlib only. Never logs secrets or PII.
@@ -14,8 +17,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
+import subprocess
 import sys
 import threading
 import uuid
@@ -42,6 +47,7 @@ SECRET_RE = re.compile(
 )
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b")
+log = logging.getLogger("orchestrator")
 
 PLAN_SCHEMA = {
     "type": "object",
@@ -99,6 +105,34 @@ def scrub(text: str, limit: int = 500) -> str:
 
 def new_id(prefix: str = "orch") -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def run_trend_bot(hub_url: str) -> None:
+    """Consume one queued research task. In-process spot(); subprocess if that import fails."""
+    dev1 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        if dev1 not in sys.path:
+            sys.path.insert(0, dev1)
+        from trend_bot.bot import spot
+    except Exception as exc:
+        log.warning("trend_bot import failed (%s); spawning subprocess", exc)
+        env = os.environ.copy()
+        env["DEPARTMENTS_BASE_URL"] = hub_url
+        subprocess.Popen(
+            [sys.executable, "-m", "trend_bot"],
+            cwd=dev1,
+            env=env,
+        )
+        return
+    previous = os.environ.get("DEPARTMENTS_BASE_URL")
+    os.environ["DEPARTMENTS_BASE_URL"] = hub_url
+    try:
+        spot()
+    finally:
+        if previous is None:
+            os.environ.pop("DEPARTMENTS_BASE_URL", None)
+        else:
+            os.environ["DEPARTMENTS_BASE_URL"] = previous
 
 
 def is_pulse_text(text: str) -> bool:
@@ -515,6 +549,8 @@ class Orchestrator:
             "status": "queued",
         }
         record["tasks"].append(entry)
+        if record["intent"] == "pulse" and task["dept"] == "research" and meta.get("trend_task"):
+            self._kick_trend_bot()
         if task.get("needs_approval"):
             self.client.post_event(
                 record["request_id"], "needs_approval",
@@ -524,6 +560,23 @@ class Orchestrator:
                 needs_approval=True,
             )
         return entry
+
+    def _kick_trend_bot(self) -> None:
+        """Start trend_bot once, off the /pulse thread. Failures are logged, never raised."""
+        if os.environ.get("ORCH_AUTO_RESEARCH", "1") == "0":
+            return
+        hub = self.client.base
+
+        def _run() -> None:
+            try:
+                run_trend_bot(hub)
+            except Exception as exc:
+                log.warning("auto research failed: %s", exc)
+
+        try:
+            threading.Thread(target=_run, name="orch-auto-research", daemon=True).start()
+        except Exception as exc:
+            log.warning("auto research thread failed to start: %s", exc)
 
     def _finish_request_event(self, record: dict, mode: str) -> None:
         approvals = [t for t in record["tasks"] if t.get("needs_approval")]
