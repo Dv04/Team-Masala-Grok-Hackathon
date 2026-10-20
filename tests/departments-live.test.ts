@@ -5,8 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createApp, listen, registerWebhooks } from "../src/server.js";
+import { liveSuitesEnabled } from "./live-gate.js";
 
 async function liveDepartments(): Promise<string | null> {
+  if (!liveSuitesEnabled()) return null;
   const candidates = [process.env.DEPARTMENTS_BASE_URL?.trim(), "http://127.0.0.1:8810"].filter(
     (value): value is string => Boolean(value),
   );

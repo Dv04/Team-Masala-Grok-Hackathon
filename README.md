@@ -30,7 +30,13 @@ DEPT_PORT=8810 python3 departments/server.py
 DEPARTMENTS_BASE_URL=http://127.0.0.1:8810 DASHBOARD_BASE_URL=http://127.0.0.1:8810 npm run dev
 ```
 
-`npm test` runs the in-process mock. If `http://127.0.0.1:8810/health` reports `service: dev4-departments`, the live test also registers `sales`, `support`, and `engineering` with `POST /api/webhooks` and checks that their events show up for the dashboard tiles. `npm run demo` runs the mock chains on 8811.
+`npm test` runs the in-process mock. It does not contact port 8810. `npm run demo` runs the mock chains on 8811.
+
+Live suites (`tests/departments-live.test.ts`, `tests/verify-live.test.ts`) register webhooks, post founder approvals, publish a listing, and can call live Grok against the departments service. They run only when `RUN_LIVE=1`. A reachable `http://127.0.0.1:8810/health` does not turn them on. With the flag set, and when that health check reports `service: dev4-departments`, they register `sales`, `support`, and `engineering` with `POST /api/webhooks` and check that their events show up for the dashboard tiles.
+
+```bash
+RUN_LIVE=1 npx vitest run tests/departments-live.test.ts tests/verify-live.test.ts
+```
 
 Pulse Studio is `POST /api/chains/launch`: a `product_created` event, a QA-checked landing page at `GET /pulse`, a sales event with `output.kind: listing_live`, and a support reply to a buyer. Each step keeps `parent_id`.
 
