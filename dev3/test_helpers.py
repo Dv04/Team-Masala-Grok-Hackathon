@@ -66,6 +66,23 @@ class GrokTests(unittest.TestCase):
         self.assertEqual(s["mode"], "mock"); self.assertIn("TimeoutError", s["engine"])
         self.assertNotIn("secret-key-xyz", err.getvalue() + json.dumps(s))
 
+    def test_base_url_env_routes_to_proxy(self):
+        import importlib
+        try:
+            with mock.patch.dict(os.environ, {"XAI_BASE_URL": "http://127.0.0.1:9999/v1/", "XAI_URL": ""}):
+                importlib.reload(grok)
+                self.assertEqual(grok.XAI_URL, "http://127.0.0.1:9999/v1/responses")
+                calls = []
+                body = {"output_text": "PASS fine"}
+                with mock.patch.dict(os.environ, {"XAI_API_KEY": "k"}), mock.patch("urllib.request.urlopen", fake_urlopen(body, calls)):
+                    grok.legal_opinion({"summary": "Tiny hat frogs"})
+                self.assertEqual(calls[0].full_url, "http://127.0.0.1:9999/v1/responses")
+            with mock.patch.dict(os.environ, {"XAI_BASE_URL": "", "XAI_URL": ""}):
+                importlib.reload(grok)
+                self.assertEqual(grok.XAI_URL, "https://api.x.ai/v1/responses")
+        finally:
+            importlib.reload(grok)
+
     def test_missing_margin_never_calls_grok(self):
         with mock.patch.dict(os.environ, {"XAI_API_KEY": "k"}), mock.patch("urllib.request.urlopen") as u:
             s = grok.margin_summary({"ok": False, "missing": ["pod_cost"]})

@@ -8,7 +8,9 @@ deterministic fallback labeled mode "mock". Never raises into the caller and nev
 """
 import json, os, sys, urllib.request
 
-XAI_URL = os.environ.get("XAI_URL", "https://api.x.ai/v1/responses")
+# XAI_BASE_URL lets the demo host route through its local spend-limit proxy; requests go to {base}/responses.
+XAI_BASE_URL = (os.environ.get("XAI_BASE_URL") or "https://api.x.ai/v1").strip().rstrip("/")
+XAI_URL = os.environ.get("XAI_URL") or f"{XAI_BASE_URL}/responses"
 XAI_MODEL = os.environ.get("XAI_MODEL", "grok-4.3")
 XAI_TIMEOUT = float(os.environ.get("XAI_TIMEOUT", "12"))
 
