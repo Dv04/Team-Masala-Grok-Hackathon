@@ -32,7 +32,10 @@ def listing_view(ev):
         "product": product or {},
         "url": out.get("url") or action.get("url") or "",
         "action": action or None,
-        "assets": out.get("assets") or (product or {}).get("assets"),
+        "assets": out.get("assets") or (product or {}).get("assets")
+        or ([out["image_url"]] if out.get("image_url") else None),
+        # dev2 / stand-in echoes of a design listing carry listing_task: one launch per product.
+        "listing_task": out.get("listing_task") or ev.get("task_id") or "",
     }
 
 
@@ -91,7 +94,11 @@ class MarketingBot:
                 })
             if not is_listing_live(ev):
                 return None
-            key = ev.get("task_id") or ""
+            # Launch only on design's listing_live. Sales/engineering echoes often omit
+            # listing_task, so the dept gate comes first; listing_task dedupe is the second guard.
+            if (ev.get("dept") or "") != "design":
+                return None
+            key = listing_view(ev)["listing_task"]
             if not key or key in self.seen:
                 return None
             self.seen.add(key)
@@ -139,8 +146,8 @@ class MarketingBot:
 
     def _launch(self, ev):
         listing = listing_view(ev)
-        task_id = f"mkt-{_safe_id(listing['task_id'])}"
-        parent = listing["task_id"] or None
+        task_id = f"mkt-{_safe_id(listing['listing_task'])}"
+        parent = listing["listing_task"] or None
         product = listing["product"]
         title = product.get("title") or "listing"
         trend = self._match_trend(product)
@@ -150,7 +157,7 @@ class MarketingBot:
         }, parent=parent)
         if not listing.get("assets"):
             brief = (
-                f"Launch creative for {product.get('type') or 'merch'}: {title}. "
+                f"Launch creative for {product.get('product_type') or product.get('type') or 'merch'}: {title}. "
                 f"Trend: {product.get('trend') or ''}. Tagline: {product.get('tagline') or ''}."
             ).strip()
             self._emit(f"{task_id}-design", "done", f"Design request for {title}", {
@@ -176,7 +183,8 @@ class MarketingBot:
             verdict = self._qa(task_id, content, context, parent, mode)
         status, needs = _status_for(verdict)
         output = {
-            "needs_qa": True,
+            # /api/qa/check already ran above. False so the hub does not QA this post a second time.
+            "needs_qa": False,
             "kind": "public_post",
             "content": content,
             "context": context,

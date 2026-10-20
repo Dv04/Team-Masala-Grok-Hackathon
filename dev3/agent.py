@@ -13,9 +13,22 @@ Run:  python dev3/agent.py            (HUB=http://127.0.0.1:8810 by default)
 import argparse, json, os, re, sys, time, urllib.request
 from datetime import datetime, timezone
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:  # optional helpers (stdlib only): live Grok via xAI Responses API + qa.check bridge. Agent works without them.
+    import grok
+except Exception:
+    grok = None
+try:
+    import qa_bridge
+except Exception:
+    qa_bridge = None
+
 HUB = os.environ.get("HUB", "http://127.0.0.1:8810").rstrip("/")
 POLL_SEC = float(os.environ.get("DEV3_POLL_SEC", "3"))
 STALL_SEC = float(os.environ.get("DEV3_STALL_SEC", "120"))
+# order_placed waits on a buyer, not a bot, so that hop gets its own (longer) stall window.
+STALL_ORDER_SEC = float(os.environ.get("DEV3_STALL_ORDER_SEC", "300"))
+GROK_ON_PASS = os.environ.get("DEV3_GROK_ON_PASS", "1") != "0"   # Grok second opinion on legal passes too (flags always)
 MARGIN_FLOOR = float(os.environ.get("DEV3_MARGIN_FLOOR", "0.25"))
 # Stripe standard US card pricing (2.9% + $0.30); Pulse Studio runs Stripe in test mode.
 FEE_PCT, FEE_FIXED = 0.029, 0.30
@@ -106,7 +119,8 @@ def finance_margin(order, by_id=None):
     pct = round(margin / revenue, 4) if revenue else 0.0
     return {"kind": "margin_update", "ok": True, "order_task": order["task_id"], "qty": qty, "revenue": revenue,
             "cogs": cogs, "payment_fees": fees, "fee_model": "stripe 2.9% + $0.30 (test mode)",
-            "margin": margin, "margin_pct": pct, "floor_pct": MARGIN_FLOOR, "under_floor": pct < MARGIN_FLOOR}
+            "margin": margin, "margin_pct": round(pct * 100, 1), "margin_frac": pct,   # margin_pct in percent, like ops
+            "floor_pct": round(MARGIN_FLOOR * 100, 1), "under_floor": pct < MARGIN_FLOOR}
 
 
 # ---------------- legal ----------------
@@ -123,7 +137,9 @@ def legal_review(ev):
         issues.append(f"right of publicity: real person '{m}' on merch needs consent")
     for m in sorted({m.group(1).lower() for m in TOS_RE.finditer(text)}):
         issues.append(f"platform ToS: '{m}' is restricted content for POD/Stripe")
-    return {"kind": "legal_review", "verdict": "flag" if issues else "pass", "issues": issues,
+    # kind legal_precheck = the PR #2 contract / dev4 stand-in kind (reasons = issues, same as the stand-in)
+    return {"kind": "legal_precheck", "review": "legal_review", "verdict": "flag" if issues else "pass", "issues": issues,
+            "reasons": issues,
             "checked": ev["task_id"], "checked_kind": kind(ev),
             "engine": "rules pre-check (mark list + ToS words), not a trademark database search"}
 
@@ -172,6 +188,45 @@ def connection_map(events, t=None):
     return m
 
 
+# ---------------- routed tasks (orchestrator /request -> POST /api/tasks -> queued event output.kind "task") ----------------
+def open_tasks(events):
+    """Queued task events for finance/legal/integrations that nobody has moved past queued yet (hub task contract:
+    actions.create_task emits {dept, task_id, status:queued, parent_id, output:{kind:task, title, detail}})."""
+    latest = {}
+    for e in events:
+        latest[e.get("task_id")] = e.get("status")
+    return [e for e in events if task_dept(e) and e.get("status") == "queued" and kind(e) == "task"
+            and latest.get(e.get("task_id")) == "queued"]
+
+
+def task_dept(ev):
+    """finance/legal/integrations if this task event is addressed to us (event dept or output.for_dept), else None."""
+    d = (ev.get("output") or {}).get("for_dept") or ev.get("dept")
+    d = str(d or "").lower()
+    return d if d in MY_DEPTS else None
+
+
+def task_text(ev):
+    o = ev.get("output") or {}
+    d = o.get("detail")
+    detail = d.get("text") if isinstance(d, dict) else d
+    return str(o.get("title") or ev.get("summary") or ""), str(detail or "")
+
+
+def finance_report(events):
+    """All orders on the log -> totals (same margin model as margin_update)."""
+    by_id = {x["task_id"]: x for x in events}   # same lookup as the order_placed path (latest event per task, e.g. listing_live)
+    rows = [finance_margin(e, by_id) for e in events if kind(e) == "order_placed"]
+    ok = [r for r in rows if r["ok"]]
+    rev = round(sum(r["revenue"] for r in ok), 2); cogs = round(sum(r["cogs"] for r in ok), 2)
+    fees = round(sum(r["payment_fees"] for r in ok), 2); margin = round(rev - cogs - fees, 2)
+    return {"kind": "finance_report", "ok": True, "orders": len(rows), "orders_priced": len(ok), "revenue": rev,
+            "cogs": cogs, "payment_fees": fees, "margin": margin, "margin_pct": round(margin / rev * 100, 1) if rev else 0.0,
+            "margin_frac": round(margin / rev, 4) if rev else 0.0,
+            "floor_pct": round(MARGIN_FLOOR * 100, 1), "under_floor": bool(rev) and margin / rev < MARGIN_FLOOR,
+            "fee_model": "stripe 2.9% + $0.30 (test mode)"}
+
+
 # ---------------- loop ----------------
 class Agent:
     def __init__(self, emit=None):
@@ -192,20 +247,25 @@ class Agent:
         except OSError:
             pass
 
-    def _emit(self, dept, task_id, status, summary, output, parent_id=None, needs_approval=None):
+    def _emit(self, dept, task_id, status, summary, output, parent_id=None, needs_approval=None, mode="mock"):
         ev = {"ts": now(), "dept": dept, "task_id": task_id, "status": status, "summary": summary[:200],
-              "actor": f"dev3-{dept}", "mode": "live", "output": output}
+              "actor": f"dev3-{dept}", "mode": mode, "output": output}
         if parent_id:
             ev["parent_id"] = parent_id
         if needs_approval is not None:
             ev["needs_approval"] = needs_approval
         return http("POST", "/api/events", ev)
 
-    def qa(self, task_id, review):
+    def qa(self, task_id, review, mode="mock"):
         """Route a legal flag through dev4's QA gate (kind 'legal' always goes to the founder queue)."""
+        if qa_bridge:
+            r = qa_bridge.legal_check(task_id, review, hub=HUB, mode=mode, opinion=review.get("grok"))
+            if r and r.get("verdict") == "unavailable":
+                print(f"{now()} qa.check unavailable for {task_id}: {r.get('error')}", file=sys.stderr, flush=True)
+            return r
         try:
             return http("POST", "/api/qa/check", {"dept": "legal", "task_id": task_id, "kind": "legal",
-                                                  "content": "; ".join(review["issues"]), "mode": "live"})
+                                                  "content": "; ".join(review["issues"]), "mode": mode})
         except Exception as e:
             print(f"{now()} qa.check failed for {task_id}: {e}", file=sys.stderr, flush=True)
 
@@ -234,34 +294,54 @@ class Agent:
             if k == "order_placed" and self.once_key(f"fin:{e['task_id']}"):
                 out = finance_margin(e, {x["task_id"]: x for x in events})
                 tid = f"fin-{e['task_id']}"
+                mode = "mock"
+                if out["ok"] and grok:
+                    out["grok"] = grok.margin_summary(out)
+                    mode = "live" if out["grok"].get("mode") == "live" else "mock"
                 if not out["ok"]:
-                    self.emit("finance", tid, "failed", out["reason"], out, parent_id=e["task_id"])
+                    self.emit("finance", tid, "failed", out["reason"], out, parent_id=e["task_id"], mode=mode)
                 elif out["under_floor"]:
                     self.emit("finance", tid, "needs_approval",
-                              f"Margin {out['margin_pct']:.0%} (${out['margin']}) under {MARGIN_FLOOR:.0%} floor; founder to approve price",
-                              out, parent_id=e["task_id"], needs_approval=True)
+                              f"Margin {out['margin_frac']:.0%} (${out['margin']}) under {MARGIN_FLOOR:.0%} floor; founder to approve price",
+                              out, parent_id=e["task_id"], needs_approval=True, mode=mode)
+                    if qa_bridge:
+                        qa_bridge.margin_check(tid, out, hub=HUB, mode=mode)
                 else:
                     self.emit("finance", tid, "done",
-                              f"Margin ${out['margin']} ({out['margin_pct']:.0%}) on ${out['revenue']} order",
-                              out, parent_id=e["task_id"])
+                              f"Margin ${out['margin']} ({out['margin_frac']:.0%}) on ${out['revenue']} order",
+                              out, parent_id=e["task_id"], mode=mode)
                 n += 1
             if k in ("trend_spotted", "product_created") and self.once_key(f"legal:{e['task_id']}"):
                 out = legal_review(e)
                 tid = f"legal-{e['task_id']}"
+                mode = "mock"
+                if grok and (out["verdict"] == "flag" or GROK_ON_PASS):
+                    op = grok.legal_opinion(dict(e, output=dict(e.get("output") or {}, issues=out["issues"])))
+                    out["grok"] = op
+                    mode = "live" if op.get("mode") == "live" else "mock"
+                    if op.get("mode") == "live" and op.get("verdict") == "flag" and out["verdict"] == "pass":
+                        out["verdict"] = "flag"   # Grok caught something the rule list missed: still founder-gated, never auto-blocked
+                        out["issues"].append("grok: " + str(op.get("opinion", ""))[:160])
+                        out["engine"] += " + Grok second opinion"
                 if out["verdict"] == "flag":
                     self.emit("legal", tid, "needs_approval", "Legal flag: " + "; ".join(out["issues"])[:180],
-                              out, parent_id=e["task_id"], needs_approval=True)
-                    self.qa(tid, out)
+                              out, parent_id=e["task_id"], needs_approval=True, mode=mode)
+                    self.qa(tid, out, mode=mode)
                 else:
-                    self.emit("legal", tid, "done", f"Legal pre-check pass on {k} {e['task_id']}", out,
-                              parent_id=e["task_id"])
+                    self.emit("legal", tid, "done", f"Legal pre-check pass on {k} {e['task_id']}"
+                              + (" (Grok agrees)" if mode == "live" else ""), out, parent_id=e["task_id"], mode=mode)
+                n += 1
+        for e in open_tasks(events):
+            if self.once_key(f"task:{e['task_id']}"):
+                self.handle_task(e, events, t)
                 n += 1
         for r, st in chain_state(events).items():
-            if st["next"] and t - st["last_ts"] > STALL_SEC and self.once_key(f"stall:{r}:{st['next']}"):
+            window = STALL_ORDER_SEC if st["next"] == "order_placed" else STALL_SEC
+            if st["next"] and t - st["last_ts"] > window and self.once_key(f"stall:{r}:{st['next']}"):
                 self.emit("integrations", f"int-stall-{r}-{st['next']}", "done",
                           f"Chain {r} stalled: no {st['next']} for {int(t - st['last_ts'])}s (has {', '.join(st['hops'])})",
                           {"kind": "chain_stalled", "root": r, "hops": st["hops"], "missing": st["next"],
-                           "stall_sec": STALL_SEC}, parent_id=r)
+                           "stall_sec": window}, parent_id=r)
                 n += 1
             if st["next"] is None and self.once_key(f"chaindone:{r}"):
                 self.emit("integrations", f"int-chain-{r}", "done", f"Chain {r} complete: trend -> margin",
@@ -270,6 +350,58 @@ class Agent:
         if n:
             self._save()
         return n
+
+
+def _handle_task(self, e, events, t=None):
+    """Claim a routed task (running), do the dept's work, then done / needs_approval / failed on the same task_id."""
+    dept, tid, parent = task_dept(e), e["task_id"], e.get("parent_id")
+    title, detail = task_text(e)
+    self.emit(dept, tid, "running", f"{dept} picked up task: {title}"[:200],
+              {"kind": "task_claimed", "title": title, "owner": "dev3"}, parent_id=parent)
+    try:
+        mode = "mock"
+        if dept == "finance":
+            out = finance_report(events)
+            if grok and out["orders_priced"]:
+                out["grok"] = grok.margin_summary(out)
+                mode = "live" if out["grok"].get("mode") == "live" else "mock"
+            out.update({"task": title, "request": detail[:300]})
+            summ = (f"Finance: {out['orders_priced']} priced orders, ${out['revenue']} revenue, margin ${out['margin']} "
+                    f"({out['margin_frac']:.0%})" if out["orders_priced"] else "Finance: no priced orders on the log yet")
+            status = "needs_approval" if out["under_floor"] else "done"
+            self.emit(dept, tid, status, summ, out, parent_id=parent, needs_approval=status == "needs_approval", mode=mode)
+            if status == "needs_approval" and qa_bridge:
+                qa_bridge.margin_check(tid, out, hub=HUB, mode=mode)
+        elif dept == "legal":
+            ev = {"task_id": tid, "summary": title, "output": {"kind": "task", "title": title, "text": detail}}
+            out = legal_review(ev)
+            if grok:
+                op = grok.legal_opinion(dict(ev, output=dict(ev["output"], issues=out["issues"])))
+                out["grok"] = op
+                mode = "live" if op.get("mode") == "live" else "mock"
+                if mode == "live" and op.get("verdict") == "flag" and out["verdict"] == "pass":
+                    out["verdict"] = "flag"; out["issues"].append("grok: " + str(op.get("opinion", ""))[:160])
+            out["task"] = title
+            if out["verdict"] == "flag":
+                self.emit(dept, tid, "needs_approval", "Legal review flag: " + "; ".join(out["issues"])[:170], out,
+                          parent_id=parent, needs_approval=True, mode=mode)
+                self.qa(tid, out, mode=mode)
+            else:
+                self.emit(dept, tid, "done", f"Legal review pass: {title}"[:200], out, parent_id=parent, mode=mode)
+        else:  # integrations
+            cm = connection_map(events, t)
+            chains = chain_state(events)
+            off = [d for d, v in cm.items() if not v["connected"]]
+            out = {"kind": "integration_status", "task": title, "depts": cm, "connected": 13 - len(off), "waiting_on": off,
+                   "chains": {r: {"hops": c["hops"], "next": c["next"]} for r, c in list(chains.items())[-10:]}}
+            self.emit(dept, tid, "done", f"Integrations: {13 - len(off)}/13 depts connected, {len(chains)} Pulse chains tracked",
+                      out, parent_id=parent)
+    except Exception as ex:
+        self.emit(dept, tid, "failed", f"{dept} task failed: {type(ex).__name__}"[:200],
+                  {"kind": "task_failed", "error": f"{type(ex).__name__}: {ex}"[:300]}, parent_id=parent)
+
+
+Agent.handle_task = _handle_task
 
 
 def main():

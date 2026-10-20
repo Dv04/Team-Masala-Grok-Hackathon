@@ -204,3 +204,25 @@ class TrendTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClaimTests(unittest.TestCase):
+    def test_accepts_pulse_trend_on_routed_task_instead_of_new_chain(self):
+        from common.grok import GrokClient
+
+        class TaskBus(Bus):
+            def get_tasks(self, **kw):
+                return [{"task_id": "research-1", "parent_id": "req-1", "status": "queued",
+                         "detail": {"expect": "trend_spotted", "trend_task": "pulse-1"}}]
+
+            def get_events(self, **kw):
+                return {"events": [{"task_id": "pulse-1", "output": {"kind": "trend_spotted", "trend": "Austin heat", "source": "backup"}}]}
+
+        bus = TaskBus()
+        s = _settings()
+        r = spot(settings=s, grok=GrokClient(s), events=bus)
+        self.assertTrue(r["skipped"])
+        self.assertEqual(len(bus.posts), 1)
+        p = bus.posts[0]
+        self.assertEqual((p["task_id"], p["parent_id"], p["output"]["kind"]), ("research-1", "req-1", "trend_accepted"))
+        self.assertEqual(p["output"]["trend_task"], "pulse-1")
