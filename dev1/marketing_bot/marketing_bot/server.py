@@ -65,7 +65,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 def serve(bot, host=None, port=None):
     _Handler.bot = bot
-    httpd = ThreadingHTTPServer((host or config.HOST, port or config.PORT), _Handler)
+    httpd = ThreadingHTTPServer((host or config.HOST, config.PORT if port is None else port), _Handler)
     thread = threading.Thread(target=httpd.serve_forever, name="marketing-http", daemon=True)
     thread.start()
     log.info("listening on http://%s:%s/pulse", httpd.server_address[0], httpd.server_address[1])
