@@ -2,13 +2,17 @@
 import json
 import os
 import sys
+import threading
 import unittest
+import urllib.error
+import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from marketing_bot.bot import MarketingBot, is_listing_live
+from marketing_bot.bot import MarketingBot, is_listing_live, is_marketing_task
 from marketing_bot.clients import GrokClient, _BANNED_BODY_KEYS
 from marketing_bot.drafts import mock_drafts, public_content
+from marketing_bot.server import serve
 from marketing_bot import config
 
 
@@ -74,11 +78,15 @@ class MarketingTests(unittest.TestCase):
         self.assertTrue(drafts["sandbox"])
         self.assertIn("MOCK", drafts["engine"])
         text = public_content(drafts)
+        self.assertEqual(text, drafts["x_post"])
         self.assertNotIn("$", text)
         self.assertNotIn("@", text)
         self.assertIn("Orbit Cat", text)
+        self.assertNotIn("People on X", text)
+        self.assertNotIn("Draft:", text)
         self.assertGreaterEqual(len(drafts["x_thread"]), 2)
         self.assertEqual(len(drafts["landing"]["bullets"]), 3)
+        self.assertIn("People on X", drafts["linkedin"])
 
     def test_listing_posts_running_then_done_with_needs_qa(self):
         fake = FakeEvents()
@@ -106,6 +114,10 @@ class MarketingTests(unittest.TestCase):
         self.assertNotIn("ts", final)
         self.assertEqual(len(fake.qa_calls), 1)
         self.assertEqual(fake.qa_calls[0]["kind"], "public_post")
+        self.assertEqual(fake.qa_calls[0]["content"], final["output"]["drafts"]["x_post"])
+        self.assertNotIn("People on X", fake.qa_calls[0]["content"])
+        self.assertIn("why=", fake.qa_calls[0]["context"])
+        self.assertIn("linkedin", final["output"]["drafts"])
 
     def test_qa_fail_revises_once_then_passes(self):
         fake = FakeEvents([
@@ -127,8 +139,11 @@ class MarketingTests(unittest.TestCase):
         self.assertEqual(len(fake.qa_calls), 2)
         self.assertIn("running", [e["status"] for e in fake.events])
 
-    def test_founder_logs_needs_approval_without_a_revise(self):
-        fake = FakeEvents([{"verdict": "founder", "score": 0.85, "reasons": ["policy: pricing/money wording"]}])
+    def test_founder_revises_once_then_rechecks(self):
+        fake = FakeEvents([
+            {"verdict": "founder", "score": 0.85, "reasons": ["policy: pricing/money wording"]},
+            {"verdict": "pass", "score": 1, "reasons": ["all checks passed"]},
+        ])
         calls = []
 
         def drafter(listing_view, trend, reasons):
@@ -137,12 +152,35 @@ class MarketingTests(unittest.TestCase):
 
         bot = self._bot(fake, drafter)
         result = bot.handle_event(listing("sale-3"))
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(len(calls), 2)
+        self.assertIsNone(calls[0])
+        self.assertTrue(calls[1])
+        self.assertEqual(len(fake.qa_calls), 2)
+        final = fake.events[-1]
+        self.assertEqual(final["status"], "done")
+        self.assertFalse(final.get("needs_approval"))
+        self.assertFalse(final["output"]["needs_qa"])
+
+    def test_founder_after_one_revise_still_needs_approval(self):
+        fake = FakeEvents([
+            {"verdict": "founder", "score": 0.85, "reasons": ["policy: pricing/money wording"]},
+            {"verdict": "founder", "score": 0.8, "reasons": ["policy: pricing/money wording"]},
+        ])
+        calls = []
+
+        def drafter(listing_view, trend, reasons):
+            calls.append(reasons)
+            return mock_drafts(listing_view, trend)
+
+        bot = self._bot(fake, drafter)
+        result = bot.handle_event(listing("sale-3b"))
         self.assertEqual(result["status"], "needs_approval")
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(fake.qa_calls), 2)
         final = fake.events[-1]
         self.assertEqual(final["status"], "needs_approval")
         self.assertTrue(final["needs_approval"])
-        self.assertFalse(final["output"]["needs_qa"])
 
     def test_ignores_unrelated_and_is_idempotent(self):
         fake = FakeEvents()
@@ -231,6 +269,10 @@ class MarketingTests(unittest.TestCase):
         bot.handle_event(listing("sale-7"))
         self.assertEqual(seen["trend"]["why"], "fan art took off")
         self.assertEqual(seen["trend"]["source"], "x")
+        self.assertIn("why=fan art took off", fake.qa_calls[0]["context"])
+        posted = next(e for e in reversed(fake.events) if e["output"].get("kind") == "public_post")
+        self.assertEqual(fake.qa_calls[0]["content"], posted["output"]["drafts"]["x_post"])
+        self.assertIn("linkedin", posted["output"]["drafts"])
 
     def test_poll_picks_up_listing_live(self):
         fake = FakeEvents()
@@ -259,6 +301,173 @@ class MarketingTests(unittest.TestCase):
         ev = {"output": {"action": {"kind": "listing_live", "product": {"title": "T"}}}}
         self.assertTrue(is_listing_live(ev))
         self.assertFalse(is_listing_live({"output": {"kind": "trend_spotted"}}))
+
+    def _hub_task(self, task="task-1", title="Write a launch post", dept="marketing", for_dept=None):
+        out = {"kind": "task", "title": title, "detail": "short caption"}
+        if for_dept:
+            out["for_dept"] = for_dept
+        return {
+            "dept": dept, "task_id": task, "status": "queued", "actor": "auto",
+            "summary": f"Task: {title}", "mode": "live", "output": out,
+        }
+
+    def test_hub_task_posts_done_draft_once(self):
+        fake = FakeEvents()
+        bot = self._bot(fake)
+        ev = self._hub_task()
+        result = bot.handle_event(ev)
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(result["mode"], "mock")
+        self.assertEqual(result["parent_id"], "task-1")
+        self.assertNotEqual(result["task_id"], "task-1")
+        self.assertIsNone(bot.handle_event(ev))
+        done = [e for e in fake.events if e["output"].get("kind") == "marketing_task_done"]
+        self.assertEqual(len(done), 1)
+        body = done[0]
+        self.assertEqual(body["dept"], "marketing")
+        self.assertEqual(body["actor"], "dev1-marketing")
+        self.assertEqual(body["status"], "done")
+        self.assertEqual(body["parent_id"], "task-1")
+        self.assertEqual(body["mode"], "mock")
+        self.assertEqual(body["output"]["kind"], "marketing_task_done")
+        self.assertIn("Write a launch post", body["output"]["draft"])
+        self.assertIn("MOCK", body["output"]["draft"])
+        self.assertIn("summary", body["output"])
+        self.assertEqual(len(fake.qa_calls), 0)
+
+    def test_hub_task_for_dept_and_ignores_other_depts(self):
+        fake = FakeEvents()
+        bot = self._bot(fake)
+        other = self._hub_task("sales-1", "Call leads", dept="sales")
+        self.assertFalse(is_marketing_task(other))
+        self.assertIsNone(bot.handle_event(other))
+        routed = self._hub_task("orch-9", "Caption the drop", dept="orchestrator", for_dept="marketing")
+        self.assertTrue(is_marketing_task(routed))
+        result = bot.handle_event(routed)
+        self.assertEqual(result["parent_id"], "orch-9")
+        self.assertIn("Caption the drop", fake.events[-1]["output"]["draft"])
+
+    def test_hub_task_deduped_across_threads(self):
+        fake = FakeEvents()
+        bot = self._bot(fake)
+        ev = self._hub_task("task-race", "Race the drop")
+        barrier = threading.Barrier(2)
+        results = []
+
+        def run():
+            barrier.wait()
+            results.append(bot.handle_event(ev))
+
+        threads = [threading.Thread(target=run) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sum(1 for r in results if r), 1)
+        self.assertEqual(len([e for e in fake.events if e["output"].get("kind") == "marketing_task_done"]), 1)
+
+    def test_poll_picks_up_marketing_task(self):
+        fake = FakeEvents()
+        ev = self._hub_task("task-poll", "Poll me")
+        fake.list_events = lambda **k: {"events": [ev]}
+        bot = self._bot(fake)
+        handled = bot.poll_once()
+        self.assertEqual(len(handled), 1)
+        self.assertEqual(handled[0]["mode"], "mock")
+        self.assertEqual(fake.events[-1]["output"]["kind"], "marketing_task_done")
+
+    def test_hub_task_mode_live_only_when_grok_succeeds(self):
+        class LiveGrok:
+            live = True
+            model = "grok-4"
+
+            def complete_json(self, system, user):
+                return {
+                    "x_post": "Live caption for the task",
+                    "x_thread": ["one", "two"],
+                    "linkedin": "li",
+                    "blog": "blog",
+                    "landing": {"headline": "h", "subhead": "s", "bullets": ["a", "b", "c"], "cta": "See the drop"},
+                }
+
+        fake = FakeEvents()
+        bot = MarketingBot(events=fake, grok=LiveGrok())
+        result = bot.handle_event(self._hub_task("task-live", "Live title"))
+        self.assertEqual(result["mode"], "live")
+        self.assertEqual(fake.events[-1]["mode"], "live")
+        self.assertEqual(fake.events[-1]["output"]["draft"], "Live caption for the task")
+        self.assertNotIn("MOCK", fake.events[-1]["output"]["draft"])
+
+        class Boom:
+            live = True
+            model = "grok-4"
+
+            def complete_json(self, system, user):
+                raise RuntimeError("xai down")
+
+        fake2 = FakeEvents()
+        bot2 = MarketingBot(events=fake2, grok=Boom())
+        result2 = bot2.handle_event(self._hub_task("task-boom", "Fallback title"))
+        self.assertEqual(result2["mode"], "mock")
+        self.assertEqual(fake2.events[-1]["mode"], "mock")
+        self.assertIn("MOCK", fake2.events[-1]["output"]["draft"])
+        self.assertIn("Fallback title", fake2.events[-1]["output"]["draft"])
+
+
+class WebhookTests(unittest.TestCase):
+    def test_pulse_returns_202_before_handler_finishes(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        class SlowBot:
+            mode = "mock"
+
+            def handle_event(self, ev):
+                started.set()
+                release.wait(5)
+                return {"task_id": "slow-1"}
+
+        httpd = serve(SlowBot(), host="127.0.0.1", port=0)
+        port = httpd.server_address[1]
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/pulse",
+            data=b'{"dept":"marketing","task_id":"t-1","output":{"kind":"task","title":"Hi"}}',
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=2) as res:
+                self.assertEqual(res.status, 202)
+                body = json.loads(res.read().decode())
+            self.assertTrue(body.get("ok"))
+            self.assertTrue(body.get("accepted"))
+            self.assertTrue(started.wait(2))
+        finally:
+            release.set()
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_pulse_rejects_bad_json(self):
+        class Bot:
+            mode = "mock"
+
+            def handle_event(self, ev):
+                raise AssertionError("bad json must not be handled")
+
+        httpd = serve(Bot(), host="127.0.0.1", port=0)
+        port = httpd.server_address[1]
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/pulse",
+            data=b"{",
+            method="POST",
+        )
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(req, timeout=2)
+            self.assertEqual(ctx.exception.code, 400)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
 
 
 class GrokClientTests(unittest.TestCase):

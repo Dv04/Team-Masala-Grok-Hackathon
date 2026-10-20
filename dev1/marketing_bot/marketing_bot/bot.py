@@ -44,6 +44,33 @@ def is_trend_spotted(ev):
     return out.get("kind") == "trend_spotted" or out.get("event") == "trend_spotted"
 
 
+def is_marketing_task(ev):
+    """Hub task routed to marketing: output.kind == task and for_dept or dept is marketing."""
+    if not isinstance(ev, dict):
+        return False
+    out = ev.get("output") if isinstance(ev.get("output"), dict) else {}
+    if out.get("kind") != "task":
+        return False
+    dept = str(out.get("for_dept") or ev.get("dept") or "").strip().lower()
+    return dept == "marketing"
+
+
+def _task_title(ev):
+    out = ev.get("output") if isinstance(ev.get("output"), dict) else {}
+    title = str(out.get("title") or ev.get("summary") or "marketing task").strip()
+    if title.lower().startswith("task:"):
+        title = title.split(":", 1)[1].strip() or title
+    return title[:180] or "marketing task"
+
+
+def _task_detail(ev):
+    out = ev.get("output") if isinstance(ev.get("output"), dict) else {}
+    detail = out.get("detail")
+    if isinstance(detail, dict):
+        detail = detail.get("text") or detail.get("brief") or ""
+    return str(detail or "").strip()[:300]
+
+
 def _safe_id(task_id):
     return re.sub(r"[^A-Za-z0-9_-]", "", task_id or "")[:48] or "listing"
 
@@ -55,6 +82,7 @@ class MarketingBot:
             api_key=config.api_key(), model=config.TEXT_MODEL, base_url=config.XAI_BASE_URL)
         self._drafter = drafter
         self.seen = set()
+        self.seen_tasks = set()
         self.trends = []
         self._lock = threading.Lock()
 
@@ -92,6 +120,12 @@ class MarketingBot:
                     "source": out.get("source") or "x",
                     "task_id": ev.get("task_id"),
                 })
+            if is_marketing_task(ev):
+                task_id = str(ev.get("task_id") or "")
+                if not task_id or task_id in self.seen_tasks:
+                    return None
+                self.seen_tasks.add(task_id)
+                return self._answer_task(ev)
             if not is_listing_live(ev):
                 return None
             # Launch only on design's listing_live. Sales/engineering echoes often omit
@@ -116,6 +150,44 @@ class MarketingBot:
             if result:
                 handled.append(result)
         return handled
+
+    def _answer_task(self, ev):
+        """One done event for a hub task. parent_id is the incoming task id. New task_id."""
+        title = _task_title(ev)
+        parent = str(ev.get("task_id") or "")
+        task_id = f"mkt-task-{_safe_id(parent)}"
+        listing = {
+            "product": {"type": "merch", "title": title, "tagline": _task_detail(ev), "trend": ""},
+            "url": "",
+        }
+        drafts = self._draft(listing, None)
+        engine = str(drafts.get("engine") or "")
+        live = engine.startswith("grok:")
+        short = (drafts.get("x_post") or "").strip()
+        if not live:
+            # Existing drafts code labels mock output. Keep that label on the short draft.
+            if "MOCK" not in short:
+                short = f"MOCK: {short}".strip()
+        summary = f"Marketing draft for {title}"[:200]
+        body = {
+            "dept": config.DEPT,
+            "task_id": task_id,
+            "parent_id": parent,
+            "actor": config.ACTOR,
+            "status": "done",
+            "summary": summary,
+            "mode": "live" if live else "mock",
+            "output": {
+                "kind": "marketing_task_done",
+                "summary": summary,
+                "draft": short,
+            },
+        }
+        try:
+            self.events.post_event(body)
+        except Exception as e:
+            log.warning("task reply failed: %s", e)
+        return {"task_id": task_id, "status": "done", "mode": body["mode"], "draft": short, "parent_id": parent}
 
     def _match_trend(self, product):
         want = str((product or {}).get("trend") or "").strip().lower()
@@ -170,10 +242,11 @@ class MarketingBot:
         if not str(drafts.get("engine") or "").startswith("grok:"):
             mode = "mock"
         content = public_content(drafts)
-        context = f"trend={product.get('trend') or ''}; title={title}; url={listing.get('url') or ''}"
+        why = str(trend.get("why") or "") if isinstance(trend, dict) else ""
+        context = f"trend={product.get('trend') or ''}; why={why}; title={title}; url={listing.get('url') or ''}"
         verdict = self._qa(task_id, content, context, parent, mode)
-        if verdict and verdict.get("verdict") == "fail":
-            self._emit(task_id, "running", "Marketing revising draft after QA fail", {
+        if verdict and verdict.get("verdict") in ("fail", "founder"):
+            self._emit(task_id, "running", f"Marketing revising draft after QA {verdict.get('verdict')}", {
                 "kind": "marketing_revise", "qa_reasons": (verdict.get("reasons") or [])[:4],
             }, parent=parent)
             drafts = self._draft(listing, trend, verdict.get("reasons") or [])
