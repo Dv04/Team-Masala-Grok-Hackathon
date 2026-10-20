@@ -33,6 +33,20 @@ class Finance(unittest.TestCase):
     def test_under_floor(self):
         self.assertTrue(agent.finance_margin(ev("o2", "order_placed", price=12, pod_cost=10))["under_floor"])
 
+    def test_hub_order_total_cost_not_double_counted(self):
+        # real hub shape: order_placed carries order totals; listing_live (parent) carries unit product price/cost
+        lst = ev("p1", "listing_live", dept="design", product={"price_usd": 6.0, "cost_usd": 1.6})
+        order = ev("o5", "order_placed", dept="ops", parent="p1", qty=2, revenue_usd=12.0, cost_usd=3.2)
+        o = agent.finance_margin(order, {"p1": lst, "o5": order})
+        self.assertEqual((o["revenue"], o["cogs"], o["payment_fees"], o["margin"]), (12.0, 3.2, 0.65, 8.15))
+        self.assertEqual(round(o["margin_pct"], 2), 0.68)
+        # no parent: order-total cost_usd is used as the total, not multiplied
+        o = agent.finance_margin(ev("o6", "order_placed", qty=2, price_usd=6.0, cost_usd=3.2))
+        self.assertEqual(o["cogs"], 3.2)
+        # explicit unit cost wins
+        o = agent.finance_margin(ev("o7", "order_placed", qty=2, price_usd=6.0, unit_cost_usd=1.6, cost_usd=3.2))
+        self.assertEqual(o["cogs"], 3.2)
+
     def test_missing_cost_is_not_guessed(self):
         o = agent.finance_margin(ev("o3", "order_placed", price=20))
         self.assertFalse(o["ok"])
