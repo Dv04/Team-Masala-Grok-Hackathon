@@ -1,0 +1,2 @@
+# Marketing bot uses the Python 3.11+ standard library only.
+# Optional: a running departments service (departments/start.sh) on DEPARTMENTS_URL.
