@@ -1,0 +1,6 @@
+{"note": "Backup trends for the Pulse Studio demo, used when X is quiet or no live trend is passed. Hand-written, safe, no brands or people.",
+ "trends": [
+  {"trend": "Austin heat wave iced coffee", "why": "Record October heat in Austin; people posting their iced coffee setups", "product_type": "sticker"},
+  {"trend": "Hackathon all-nighter", "why": "Builders sharing late-night hackathon desk photos", "product_type": "tee"},
+  {"trend": "Fall foliage road trip", "why": "Leaf-peeping road trip photos rising this week", "product_type": "poster"}
+ ]}

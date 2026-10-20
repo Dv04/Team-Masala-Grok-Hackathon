@@ -9,8 +9,8 @@ cd "$SRC"
 tar cf - --exclude='__pycache__' --exclude='.venv' --exclude='node_modules' --exclude='.git' --exclude='*.pyc' \
   --exclude='.env' --exclude='*.duckdb' --exclude='*.db' \
   server.py lib static vendor qa bin smoke.py demo.sh start.sh stop.sh reset.sh pack.sh \
-  README.md PLAN.md TASKS.toon ROUTINES.md INTERFACES.md data/fixtures data/metrics.yaml 2>/dev/null | tar xf - -C "$D"
-for d in data/outbox data/published data/hr/onboarding data/archive logs run design-out; do mkdir -p "$D/$d"; touch "$D/$d/.gitkeep"; done
+  README.md PLAN.md TASKS.toon ROUTINES.md INTERFACES.md data/fixtures data/metrics.yaml data/trends 2>/dev/null | tar xf - -C "$D"
+for d in data/ops data/design-out data/outbox data/published data/hr/onboarding data/archive logs run design-out; do mkdir -p "$D/$d"; touch "$D/$d/.gitkeep"; done
 cat > "$D/requirements.txt" <<'EOF'
 # dept service (server.py + lib/). Python 3.11+. External MCP servers are started by start.sh via uvx/npx.
 mcp==1.26.0
