@@ -160,18 +160,27 @@ def chain_state(events):
             return root(by_id[p], depth + 1)
         return p or e["task_id"]
 
+    latest, waiting, trend_ids = {}, set(), {}
+    for e in events:
+        latest[e["task_id"]] = e
+    for e in latest.values():   # founder-gated or blocked chains are waiting on a human, not stalled
+        if e.get("dept") != "integrations" and (e.get("status") == "needs_approval" or kind(e) == "product_blocked"):
+            waiting.add(root(e))
     for e in events:
         k = kind(e)
         if k in CHAIN and e.get("dept") != "integrations":
             r = roots.setdefault(root(e), {})
             r.setdefault(k, parse_ts(e.get("ts", "")))
+            if k == "trend_spotted":
+                trend_ids.setdefault(root(e), e["task_id"])
     out = {}
     for r, hops in roots.items():
         if "trend_spotted" not in hops:
             continue
         done = [h for h in CHAIN if h in hops]
         nxt = next((h for h in CHAIN if h not in hops), None)
-        out[r] = {"hops": done, "next": nxt, "last_ts": max(hops.values())}
+        out[r] = {"hops": done, "next": nxt, "last_ts": max(hops.values()), "waiting": r in waiting,
+                  "trend_task": trend_ids.get(r)}
     return out
 
 
@@ -337,7 +346,12 @@ class Agent:
                 n += 1
         for r, st in chain_state(events).items():
             window = STALL_ORDER_SEC if st["next"] == "order_placed" else STALL_SEC
-            if st["next"] and t - st["last_ts"] > window and self.once_key(f"stall:{r}:{st['next']}"):
+            if st["next"] and self.once_key(f"watch:{r}"):
+                # tell dev4's integrations stand-in the real dept is watching this chain (else it fires chain_stalled at 30s)
+                self.emit("integrations", f"int-watch-{r}", "running", f"Watching chain {r}: trend_spotted seen",
+                          {"kind": "chain_watch", "root": r, "trend_task": st["trend_task"], "hops": st["hops"], "next": st["next"]}, parent_id=r)
+                n += 1
+            if st["next"] and not st["waiting"] and t - st["last_ts"] > window and self.once_key(f"stall:{r}:{st['next']}"):
                 self.emit("integrations", f"int-stall-{r}-{st['next']}", "done",
                           f"Chain {r} stalled: no {st['next']} for {int(t - st['last_ts'])}s (has {', '.join(st['hops'])})",
                           {"kind": "chain_stalled", "root": r, "hops": st["hops"], "missing": st["next"],

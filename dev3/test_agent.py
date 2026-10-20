@@ -103,7 +103,7 @@ class Loop(unittest.TestCase):
                ev("fin-o9", "order_placed", dept="finance", price=1, pod_cost=1) | {"actor": "dev3-finance"}]
         a.step(evs, t=0)
         a.step(evs, t=0)
-        depts = [x[0][0] for x in out]
+        depts = [x[0][0] for x in out if x[0][4].get("kind") != "chain_watch"]
         self.assertEqual(depts, ["finance", "legal"])
         self.assertEqual(out[1][0][2], "needs_approval")
 
@@ -118,7 +118,7 @@ class GrokWiring(unittest.TestCase):
     def test_no_key_marks_finance_and_legal_mock(self):
         a, out = self._agent()
         a.step([ev("o1", "order_placed", price=30, pod_cost=12), ev("t1", "trend_spotted", dept="research", trend="Tiny hat frogs")], t=0)
-        modes = {x[0][0]: x[1].get("mode") for x in out}
+        modes = {x[0][0]: x[1].get("mode") for x in out if x[0][4].get("kind") != "chain_watch"}
         self.assertEqual(modes, {"finance": "mock", "legal": "mock"})
         self.assertEqual(out[0][0][4]["grok"]["mode"], "mock")
 
