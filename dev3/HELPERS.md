@@ -5,11 +5,15 @@ New files only; `dev3/agent.py` and `departments/` are untouched. Stdlib Python,
 | File | What it does |
 |---|---|
 | `grok.py` | `legal_opinion(review_or_event)` and `margin_summary(margin_output)` call the xAI Responses API (`POST https://api.x.ai/v1/responses`, model `XAI_MODEL`, default `grok-4.3`, reasoning effort low, 20 s timeout) **only when `XAI_API_KEY` is set**. Otherwise, or on any error, they return a deterministic fallback labeled `mode: "mock"`. They never raise and never log the key. |
-| `qa_bridge.py` | `margin_check(task_id, margin_output)` sends margins under the floor to `POST /api/qa/check` with kind `pricing`. `legal_check(task_id, legal_review, opinion=None)` sends legal results with kind `legal`. The body is exactly `{dept, task_id, kind, content, context?, mode?}`. Hub down returns `{"verdict": "unavailable", ...}`. |
+| `qa_bridge.py` | `margin_check(task_id, margin_output)` sends margins under the floor to `POST /api/qa/check` with kind `pricing`. `legal_check(task_id, legal_review, opinion=None)` sends legal FLAGS with kind `legal` (passes return None so the founder queue isn't flooded). The body is exactly `{dept, task_id, kind, content, context?, mode?}`. Hub down returns `{"verdict": "unavailable", ...}`. |
 | `rehearse.py` | `--mode pulse` (default) runs the real chain on main: `POST /api/pulse/start`, waits for `listing_live`, then `POST /api/ops/order {task_id, qty}`. `--mode synthetic` posts trend, product, listing (dev2 shape, price 49), an order with cost and an order without cost straight to `/api/events`. Events are contract-valid, mode `mock`, actor `rehearse-dev3`. `--hub` or `HUB_URL` sets the hub. |
 | `test_helpers.py` | 12 unit tests, no network. They also validate rehearsal events with `departments/lib/events.validate`. |
 
-## Wiring into agent.py (for the Claude Code bot)
+## Wired into agent.py (done in this PR)
+
+agent.py now imports grok/qa_bridge with a guarded import, adds `output.grok` to finance and legal, and sets event mode `live` only when a real Grok call succeeded (`mock` otherwise). It also picks up routed tasks: queued events with `output.kind: task` for finance/legal/integrations (event dept or `output.for_dept`) get `running`, then `done` / `needs_approval` / `failed` on the same task_id with parent_id = the request id.
+
+### Original wiring notes
 
 ```python
 try:

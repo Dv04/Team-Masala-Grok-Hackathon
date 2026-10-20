@@ -28,8 +28,8 @@ def fake_urlopen(payload, calls=None):
 
 
 MARGIN_LOW = {"kind": "margin_update", "ok": True, "revenue": 20.0, "cogs": 15.0, "payment_fees": 0.88,
-              "margin": 4.12, "margin_pct": 0.206, "floor_pct": 0.25, "under_floor": True}
-MARGIN_OK = dict(MARGIN_LOW, margin=26.25, margin_pct=0.525, revenue=50.0, under_floor=False)
+              "margin": 4.12, "margin_pct": 20.6, "margin_frac": 0.206, "floor_pct": 25.0, "under_floor": True}
+MARGIN_OK = dict(MARGIN_LOW, margin=26.25, margin_pct=52.5, margin_frac=0.525, revenue=50.0, under_floor=False)
 FLAG = {"kind": "legal_review", "verdict": "flag", "issues": ["trademark: 'pokemon' is a protected mark"],
         "checked": "t1", "checked_kind": "trend_spotted"}
 PASS = {"kind": "legal_review", "verdict": "pass", "issues": [], "checked": "t2", "checked_kind": "product_created"}
@@ -93,12 +93,13 @@ class QABridgeTests(unittest.TestCase):
             self.assertIsNone(qa_bridge.margin_check("fin-o2", MARGIN_OK))
         u.assert_not_called()
 
-    def test_legal_pass_and_flag_are_kind_legal(self):
-        for rv in (PASS, FLAG):
-            r, calls = self._run(qa_bridge.legal_check, "legal-x", rv, "http://hub:1")
-            b = json.loads(calls[0].data)
-            self.assertEqual((b["dept"], b["kind"]), ("legal", "legal"))
-            self.assertIn(rv["verdict"].upper(), b["content"])
+    def test_legal_flag_is_kind_legal_and_pass_skips_qa(self):
+        r, calls = self._run(qa_bridge.legal_check, "legal-x", FLAG, "http://hub:1")
+        b = json.loads(calls[0].data)
+        self.assertEqual((b["dept"], b["kind"]), ("legal", "legal")); self.assertIn("FLAG", b["content"])
+        with mock.patch("urllib.request.urlopen") as u:
+            self.assertIsNone(qa_bridge.legal_check("legal-y", PASS, "http://hub:1"))
+        u.assert_not_called()
 
     def test_hub_down_returns_unavailable(self):
         def down(req, timeout=None): raise ConnectionRefusedError("nope")

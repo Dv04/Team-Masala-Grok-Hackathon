@@ -5,7 +5,7 @@ Response: {verdict: pass|fail|founder, score, reasons, ...}. If the hub is down,
 {"verdict": "unavailable", "error": ...} instead of raising.
 
   margin_check(task_id, margin_output)  kind "pricing" (always founder in dev4's gate) for margin under floor
-  legal_check(task_id, legal_review)    kind "legal" for both pass and flag
+  legal_check(task_id, legal_review)    kind "legal" for flags only (passes return None: no founder-queue flood)
 """
 import json, os, urllib.request
 
@@ -37,16 +37,19 @@ def margin_check(task_id, m, hub=None, mode="live"):
     """Only margins under the floor go to QA (kind pricing). Returns None when no check is needed."""
     if not m or not m.get("ok") or not m.get("under_floor"):
         return None
-    content = (f"Pulse Studio order margin {m.get('margin_pct', 0):.1%} (${m.get('margin')}) is under the "
-               f"{m.get('floor_pct', 0.25):.0%} floor: revenue ${m.get('revenue')}, cogs ${m.get('cogs')}, "
+    content = (f"Pulse Studio order margin {m.get('margin_frac', 0):.1%} (${m.get('margin')}) is under the "
+               f"{m.get('floor_pct', 25)}% floor: revenue ${m.get('revenue')}, cogs ${m.get('cogs')}, "
                f"fees ${m.get('payment_fees')}. Founder to approve or reprice.")
     return qa_check("finance", task_id, "pricing", content, context="dev3 finance margin_update", mode=mode, hub=hub)
 
 
 def legal_check(task_id, review, hub=None, mode="live", opinion=None):
-    """Legal pass and flag both go through QA (kind legal routes to the founder in dev4's gate)."""
+    """Only legal FLAGS go through QA (kind legal always routes to the founder in dev4's gate, so sending passes
+    would flood the founder queue). Returns None for a pass."""
     review = review or {}
     verdict = review.get("verdict", "pass")
+    if verdict != "flag":
+        return None
     issues = review.get("issues") or []
     content = f"Legal pre-check {verdict.upper()} on {review.get('checked_kind') or 'item'} {review.get('checked') or task_id}: " + \
               ("; ".join(issues) if issues else "no protected marks, real people or restricted content found")

@@ -10,7 +10,7 @@ import json, os, sys, urllib.request
 
 XAI_URL = os.environ.get("XAI_URL", "https://api.x.ai/v1/responses")
 XAI_MODEL = os.environ.get("XAI_MODEL", "grok-4.3")
-XAI_TIMEOUT = float(os.environ.get("XAI_TIMEOUT", "20"))
+XAI_TIMEOUT = float(os.environ.get("XAI_TIMEOUT", "12"))
 
 
 def _key():
@@ -84,6 +84,6 @@ def margin_summary(m):
     txt, engine = ask(FIN_SYS, json.dumps(facts))
     if txt:
         return {"mode": "live", "summary": txt.splitlines()[0][:200], "engine": engine}
-    pct = m.get("margin_pct") or 0
+    pct = m.get("margin_frac") if m.get("margin_frac") is not None else (m.get("margin_pct") or 0) / 100
     s = f"MOCK: margin ${m.get('margin')} ({pct:.0%}) on ${m.get('revenue')}" + (" - under floor, founder to review price" if m.get("under_floor") else "")
     return {"mode": "mock", "summary": s, "engine": f"mock fallback ({engine})"}
