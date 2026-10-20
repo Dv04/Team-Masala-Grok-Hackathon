@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Masala Co. — one-person company</title>
+<link rel="icon" href="data:,">
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--line:#30363d;--fg:#e6edf3;--mut:#8b949e;--acc:#58a6ff;
+--ok:#3fb950;--warn:#d29922;--bad:#f85149;--vio:#bc8cff;--mock:#d29922;--live:#3fb950}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:14px 22px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+h1{font-size:22px;margin:0;font-weight:700}h1 small{color:var(--mut);font-weight:400;font-size:14px;margin-left:8px}
+h2{font-size:15px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);display:flex;align-items:center;gap:8px}
+.sp{flex:1}.conn{font-size:13px;color:var(--mut)}.conn b{color:var(--ok)}.conn.down b{color:var(--bad)}
+button{font:inherit;border:1px solid var(--line);background:var(--panel2);color:var(--fg);padding:7px 14px;border-radius:8px;cursor:pointer}
+button:hover{border-color:var(--acc)}button.pri{background:#1f6feb;border-color:#1f6feb}button.ok{background:#238636;border-color:#238636}button.bad{background:#a12d2a;border-color:#a12d2a}
+button:disabled{opacity:.5;cursor:default}
+.toggle{display:flex;align-items:center;gap:10px;padding:6px 12px;border:1px solid var(--line);border-radius:999px;cursor:pointer;user-select:none}
+.toggle .sw{width:42px;height:22px;border-radius:11px;background:#30363d;position:relative;transition:.2s}
+.toggle .sw:after{content:"";position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;top:2px;left:2px;transition:.2s}
+.toggle.on{border-color:var(--vio)}.toggle.on .sw{background:var(--vio)}.toggle.on .sw:after{left:22px}
+.banners{display:flex;gap:10px;padding:10px 22px;flex-wrap:wrap}
+.banner{padding:7px 12px;border-radius:8px;font-size:14px;border:1px solid}
+.banner.mock{border-color:var(--mock);color:#f0c674;background:#2b2111}.banner.sbx{border-color:var(--acc);color:#a5d6ff;background:#0f2238}.banner.live{border-color:var(--ok);color:#7ee787;background:#0f2a17}
+#msg{padding:0 22px;min-height:0}#msg div{margin:6px 0;padding:8px 12px;border-radius:8px;background:#0f2238;border:1px solid var(--acc)}#msg div.err{background:#2d1214;border-color:var(--bad)}
+main{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:18px;padding:12px 22px 30px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:18px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:10px}
+.tile{background:var(--panel2);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:10px;padding:10px 11px;min-height:112px}
+.tile.idle{opacity:.55}.tile.off{opacity:.38;border-style:dashed}
+.tile .t{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;flex-wrap:wrap}.tile .t>div{min-width:0;flex:1 1 110px}.tile .n{font-weight:700;font-size:15px}
+.tile .o{font-size:12px;color:var(--mut)}.tile .s{margin-top:6px;font-size:13px}.tile .c{margin-top:6px;display:flex;gap:4px;flex-wrap:wrap}
+.badge{font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;letter-spacing:.04em;white-space:nowrap}
+.b-mock{background:#3a2a0b;color:#f0c674;border:1px solid #6b4f12}.b-live{background:#0f2a17;color:#7ee787;border:1px solid #1f6f37}.b-none{background:#21262d;color:var(--mut);border:1px solid var(--line)}
+.chip{font-size:11px;padding:1px 6px;border-radius:6px;background:#21262d;color:var(--mut)}
+.st{font-weight:700}.st-queued{color:var(--mut)}.st-running{color:var(--acc)}.st-needs_approval{color:var(--vio)}.st-approved{color:var(--ok)}.st-rejected{color:var(--warn)}.st-done{color:var(--ok)}.st-failed{color:var(--bad)}
+.bl-queued{border-left-color:var(--mut)!important}.bl-running{border-left-color:var(--acc)!important}.bl-needs_approval{border-left-color:var(--vio)!important}.bl-approved,.bl-done{border-left-color:var(--ok)!important}.bl-rejected{border-left-color:var(--warn)!important}.bl-failed{border-left-color:var(--bad)!important}
+.feed{max-height:560px;overflow:auto;display:flex;flex-direction:column;gap:6px}
+.ev{display:grid;grid-template-columns:78px 96px 1fr;gap:10px;padding:8px 10px;background:var(--panel2);border-radius:8px;border-left:4px solid var(--line);cursor:pointer}
+.ev:hover{outline:1px solid var(--acc)}.ev.new{animation:fl 1.6s}@keyframes fl{from{background:#1f3b5c}}
+.ev .ts{color:var(--mut);font-size:13px;font-variant-numeric:tabular-nums}.ev .d{font-weight:700}.ev .sum{font-size:14px}
+.ev .meta{font-size:12px;color:var(--mut);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap}.act{color:#7ee787}
+.actor{padding:0 6px;border-radius:6px;background:#21262d}.actor.auto{background:#13304f;color:#a5d6ff}.actor.founder{background:#33204f;color:#d2a8ff}.actor.grok-routine{background:#0f2a17;color:#7ee787}
+.empty{color:var(--mut);padding:14px;text-align:center;font-size:14px}
+.ap{background:var(--panel2);border:1px solid var(--line);border-left:4px solid var(--vio);border-radius:10px;padding:10px;margin-bottom:10px}
+.ap .h{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.ap .sum{font-weight:600;margin:6px 0}
+.pv{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px;white-space:pre-wrap;max-height:180px;overflow:auto;margin:6px 0}
+.pv img{max-width:140px;max-height:110px;margin:4px;background:#fff;border-radius:4px}
+.rs{font-size:13px;color:#f0c674;margin:4px 0}
+.ap textarea{width:100%;background:#0d1117;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px;font:inherit;font-size:13px;min-height:36px;resize:vertical}
+.ap .btns{display:flex;gap:8px;margin-top:6px}
+.kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.kpi{background:var(--panel2);border-radius:8px;padding:10px}
+.kpi .v{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}.kpi .l{font-size:12px;color:var(--mut)}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mut);font-weight:600}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:#0d1117;padding:1px 4px;border-radius:4px}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:9;padding:20px}
+#modal.show{display:flex}#modal .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;max-width:900px;width:100%;max-height:88vh;overflow:auto;padding:16px}
+#modal pre{background:#0d1117;padding:10px;border-radius:8px;overflow:auto;font-size:12.5px}
+a{color:var(--acc)}.links a{display:inline-block;margin:4px 10px 4px 0}
+@media (max-width:1100px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Masala Co. — one-person company <small>13 bot departments · QA gate on everything · founder approves the rest</small></h1>
+  <div class="sp"></div>
+  <span id="conn" class="conn">service: <b>connecting…</b></span>
+  <div id="away" class="toggle" title="POST /api/founder/away"><span class="sw"></span><span id="awayLbl">Founder present</span></div>
+  <button id="demo" class="pri" title="POST /api/demo/seed">▶ Run demo</button>
+</header>
+<div class="banners" id="banners">
+  <span class="banner mock" id="bMock">MOCK mode: no XAI_API_KEY set. HR and Design output is placeholder (not AI generated); QA runs deterministic rules only.</span>
+  <span class="banner sbx">SANDBOX: "sent" emails are files in an outbox with fictional recipients, not real inboxes. Payments: test mode only.</span>
+</div>
+<div id="msg"></div>
+<main>
+  <div>
+    <section><h2>Departments <span class="chip" id="deptCount"></span></h2><div class="tiles" id="tiles"></div></section>
+    <section><h2>Live event feed <span class="chip">newest first · polled every 2 s · click for details</span></h2><div class="feed" id="feed"></div></section>
+  </div>
+  <div>
+    <section><h2>Founder approval queue <span class="chip" id="apCount">0</span></h2><div id="aps"></div></section>
+    <section><h2>KPIs <span class="chip">from /api/ops/kpis (DuckDB over the event log)</span></h2><div class="kpis" id="kpis"></div><div id="kpiTable" style="margin-top:10px"></div></section>
+    <section><h2>QA reliability <span class="chip">golden suite · promptfoo · deterministic asserts</span><span class="sp"></span><button id="relRun" style="font-size:12px;padding:4px 10px">Re-run suite</button></h2><div id="rel"><div class="empty">loading…</div></div></section>
+    <section><h2>Ask ops <span class="chip">governed metrics → SQL over the event log</span></h2>
+      <form id="askF" style="display:flex;gap:8px"><input id="askQ" placeholder="e.g. pending approvals? tasks by dept?" style="flex:1;background:#0d1117;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit"><button class="pri" type="submit">Ask</button></form>
+      <div id="askA" style="margin-top:8px"></div></section>
+    <section><h2>Automation rules <span class="chip">why each thing happened</span></h2><div id="rules"><div class="empty">loading…</div></div></section>
+  </div>
+</main>
+<div id="modal"><div class="box"><div style="display:flex;align-items:center"><h2 id="mTitle" style="margin:0">Event</h2><div class="sp"></div><button id="mClose">Close</button></div><div class="links" id="mLinks"></div><pre id="mBody"></pre></div></div>
+<script>
+"use strict";
+(function(){
+var API = (location.protocol === "file:") ? "http://127.0.0.1:8810" : "";
+// 13 departments. Names for 1-3 and 7-9 are not decided yet, so they are honest placeholders until a real dept posts events.
+var DEPTS = [
+  {n:1, key:"orchestrator", name:"Orchestrator / Chief of Staff", owner:"dev1", alias:["chief_of_staff"]},
+  {n:2, key:"research", name:"Research & strategy", owner:"dev1", alias:["strategy"]},
+  {n:3, key:"marketing", name:"Marketing & content", owner:"dev1", alias:["content"]},
+  {n:4, key:"sales", name:"Sales", owner:"dev2"},
+  {n:5, key:"support", name:"Support", owner:"dev2"},
+  {n:6, key:"engineering", name:"Engineering", owner:"dev2"},
+  {n:7, key:null, name:"Dept 7", owner:"dev3 · TBD"},
+  {n:8, key:null, name:"Dept 8", owner:"dev3 · TBD"},
+  {n:9, key:null, name:"Dept 9", owner:"dev3 · TBD"},
+  {n:10, key:"hr", name:"HR", owner:"dev4 · open_recruiter"},
+  {n:11, key:"design", name:"Design", owner:"dev4 · Grok-MCP + brandkit"},
+  {n:12, key:"ops", name:"Data / Ops", owner:"dev4 · DuckDB MCP", alias:["data"]},
+  {n:13, key:"qa", name:"QA / approval gate", owner:"dev4 · rules + promptfoo"}
+];
+var OWN = {hr:1, design:1, ops:1, qa:1};
+var SYSTEM = {founder:1, auto:1, system:1, dashboard:1, inbound:1, scheduler:1, sched:1};
+var $ = function(id){return document.getElementById(id);};
+function esc(s){return String(s == null ? "" : s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+function fmtT(ts){try{return new Date(ts).toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"});}catch(e){return ts;}}
+function ago(ts){var s=(Date.now()-new Date(ts).getTime())/1000; if(!(s>=0)) return ""; if(s<60) return Math.round(s)+"s ago"; if(s<3600) return Math.round(s/60)+"m ago"; return Math.round(s/3600)+"h ago";}
+function msg(t, err){var d=document.createElement("div"); if(err) d.className="err"; d.textContent=t; $("msg").appendChild(d); setTimeout(function(){d.remove();}, 7000);}
+function get(p){return fetch(API+p,{cache:"no-store"}).then(function(r){ if(!r.ok){var e=new Error("HTTP "+r.status); e.status=r.status; throw e;} return r.json();});}
+function post(p, body){return fetch(API+p,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body||{})}).then(function(r){return r.text().then(function(t){var j; try{j=JSON.parse(t);}catch(e){j={raw:t};} if(!r.ok){var e2=new Error((j&&j.error)||("HTTP "+r.status)); e2.status=r.status; throw e2;} return j;});});}
+
+// file path -> served URL (/files/{published|outbox|design-out}/...)
+function fileUrl(p){
+  if(!p || typeof p !== "string") return null;
+  if(/^https?:\/\//.test(p) || p.indexOf("/files/")===0) return p;
+  var m = p.match(/(?:^|\/)(data\/published|published|data\/outbox|outbox|design-out)\/(.+)$/);
+  if(!m) return null;
+  var root = m[1].replace("data/","");
+  return API + "/files/" + root + "/" + m[2].split("/").map(encodeURIComponent).join("/");
+}
+function collectFiles(o, out, depth){
+  out = out || []; depth = depth || 0; if(depth>5 || o==null) return out;
+  if(typeof o === "string"){ var u=fileUrl(o); if(u && out.indexOf(u)<0) out.push(u); }
+  else if(Array.isArray(o)) o.forEach(function(x){collectFiles(x,out,depth+1);});
+  else if(typeof o === "object") Object.keys(o).forEach(function(k){collectFiles(o[k],out,depth+1);});
+  return out;
+}
+
+// ---------- state ----------
+var events = [], seen = {}, firstLoad = true, lastFeedSig = "", lastApSig = "", notes = {}, health = null, awayState = false, extraSlots = {};
+
+function deptSlot(d){
+  for(var i=0;i<DEPTS.length;i++){ var x=DEPTS[i]; if(x.key===d || (x.alias && x.alias.indexOf(d)>=0)) return x; }
+  return null;
+}
+function renderTiles(){
+  var by = {};
+  events.forEach(function(e){
+    var d = e.dept; if(SYSTEM[d]) return;
+    var key = d;
+    if(d==="qa" && e.output && e.output.for_dept){ /* qa verdicts count for qa */ }
+    var slot = deptSlot(d);
+    if(!slot){ // a dept we don't know yet (dev1/dev3): put it in the next free placeholder, with its real name
+      if(!extraSlots[d]){ for(var i=0;i<DEPTS.length;i++){ if(!DEPTS[i].key){ DEPTS[i].key=d; DEPTS[i].name=d.charAt(0).toUpperCase()+d.slice(1); DEPTS[i].owner="connected"; extraSlots[d]=1; break; } } }
+      slot = deptSlot(d); if(!slot) return;
+    }
+    key = slot.key;
+    var b = by[key] || (by[key] = {counts:{}, last:null, modes:{}, n:0});
+    b.counts[e.status] = (b.counts[e.status]||0)+1; b.last = e; b.modes[e.mode]=1; b.n++;
+  });
+  var html = "", connected = 0;
+  DEPTS.forEach(function(d){
+    var b = d.key ? by[d.key] : null;
+    if(b) connected++;
+    var cls = "tile", badge;
+    if(!d.key){ cls += " off"; badge = '<span class="badge b-none">NOT CONNECTED</span>'; }
+    else if(!b && OWN[d.key]){ cls += " idle"; badge = '<span class="badge b-none">NO EVENTS</span>'; }
+    else if(!b){ cls += " off"; badge = '<span class="badge b-none">NOT CONNECTED</span>'; }
+    else { cls += " bl-"+b.last.status; badge = b.modes.mock ? '<span class="badge b-mock">MOCK</span>' : (d.key==="qa" && health && health.modes && health.modes.qa==="rules_only" ? '<span class="badge b-live" title="deterministic rules are real; LLM rubric skipped (no XAI_API_KEY)">LIVE · RULES</span>' : '<span class="badge b-live">LIVE</span>');
+           if(b.modes.mock && b.modes.live) badge = '<span class="badge b-live">LIVE</span> <span class="badge b-mock">MOCK</span>'; }
+    var body;
+    if(!d.key) body = '<div class="s" style="color:var(--mut)">not connected yet</div>';
+    else if(!b) body = '<div class="s" style="color:var(--mut)">'+ (OWN[d.key] ? "idle, no events yet" : "not connected yet") +'</div>';
+    else {
+      body = '<div class="s"><span class="st st-'+esc(b.last.status)+'">'+esc(b.last.status)+'</span> · '+esc(ago(b.last.ts))+'<div style="color:var(--mut);font-size:12px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(b.last.summary)+'">'+esc(b.last.summary)+'</div></div><div class="c">';
+      Object.keys(b.counts).forEach(function(s){ body += '<span class="chip st-'+esc(s)+'">'+esc(s)+' '+b.counts[s]+'</span>'; });
+      body += '</div>';
+    }
+    html += '<div class="'+cls+'"><div class="t"><div><div class="n">'+d.n+'. '+esc(d.name)+'</div><div class="o">'+esc(d.owner)+'</div></div>'+badge+'</div>'+body+'</div>';
+  });
+  $("tiles").innerHTML = html;
+  $("deptCount").textContent = connected+" of 13 active";
+}
+
+function brandChips(o){
+  o = o || {}; var h = "";
+  (o.assets||[]).forEach(function(a){
+    if(!a || !("brand_score" in a)) return;
+    var sc = a.brand_score, mock = /MOCK/.test(a.brand_scorer||"");
+    var col = sc==null ? "var(--mut)" : (sc >= 0.7 ? "var(--ok)" : "var(--bad)");
+    h += '<span class="chip" title="'+esc((a.brand_scorer||"")+" · "+(a.brand_reasons||[]).join("; "))+'" style="color:'+col+'">'+esc(a.asset)+' brand '+(sc==null?"n/a":esc(sc))+
+         (a.attempts>1 ? ' (retry; was '+esc(a.first_score)+')' : '')+(mock?' · MOCK score':'')+'</span>';
+  });
+  if(o.kind==="design_regenerate") h += '<span class="chip" style="color:var(--warn)">↻ regenerate '+esc(o.asset)+': '+esc(o.brand_score)+' &lt; '+esc(o.threshold)+(/MOCK/.test(o.brand_scorer||"")?' · MOCK score':'')+'</span>';
+  return h;
+}
+function chainOf(e){
+  var byTask = {}; events.forEach(function(x){ if(!byTask[x.task_id]) byTask[x.task_id]=x; });
+  var chain = [], p = e.parent_id, guard = 0;
+  while(p && guard++<6){ chain.push(p); var pe = byTask[p]; p = pe ? pe.parent_id : null; if(p===e.task_id) break; }
+  return chain;
+}
+function renderFeed(){
+  var list = events.slice(-50).reverse();
+  var sig = list.length ? (list[0].ts+list[0].task_id+list.length) : "0";
+  if(sig === lastFeedSig) return; lastFeedSig = sig;
+  if(!list.length){ $("feed").innerHTML = '<div class="empty">No events yet. Press ▶ Run demo, or have any dept POST /api/events.</div>'; return; }
+  var html = "";
+  list.forEach(function(e, i){
+    var id = e.ts+"|"+e.task_id+"|"+e.status+"|"+e.dept;
+    var isNew = !firstLoad && !seen[id]; seen[id]=1;
+    var ch = chainOf(e), out = e.output || {}, act = out.action;
+    var actor = e.actor || "—";
+    html += '<div class="ev bl-'+esc(e.status)+(isNew?" new":"")+'" data-i="'+(list.length-1-i)+'">'+
+      '<div class="ts">'+esc(fmtT(e.ts))+'</div>'+
+      '<div><div class="d">'+esc(e.dept)+'</div><span class="st st-'+esc(e.status)+'" style="font-size:12px">'+esc(e.status)+'</span></div>'+
+      '<div><div class="sum">'+esc(e.summary)+'</div><div class="meta"><span class="actor '+esc(actor)+'">'+esc(actor)+'</span>'+
+      '<span class="badge '+(e.mode==="live"?"b-live":"b-mock")+'">'+esc(String(e.mode).toUpperCase())+'</span>'+
+      '<span>task <code>'+esc(e.task_id)+'</code></span>'+
+      (ch.length ? '<span>⤷ parent '+ch.map(function(c){return '<code>'+esc(c)+'</code>';}).join(' ← ')+'</span>' : '')+
+      brandChips(out)+
+      (act ? '<span class="act">⚙ action: '+esc(act.type||"")+(act.executed_by?' · by '+esc(act.executed_by):'')+'</span>' : '')+
+      '</div></div></div>';
+  });
+  $("feed").innerHTML = html;
+}
+$("feed").addEventListener("click", function(ev){
+  var el = ev.target.closest(".ev"); if(!el) return;
+  var e = events.slice(-50)[+el.getAttribute("data-i")]; if(!e) return;
+  openModal(e.dept+" · "+e.status+" · "+e.task_id, e);
+});
+function openModal(title, obj){
+  $("mTitle").textContent = title;
+  $("mBody").textContent = JSON.stringify(obj, null, 2);
+  var out = (obj && obj.output) || {}, links = [], act = out.action;
+  if(act){ var u = fileUrl(act.url) || fileUrl(act.path); if(u) links.push(u); }
+  collectFiles(out).forEach(function(u){ if(links.indexOf(u)<0) links.push(u); });
+  $("mLinks").innerHTML = links.length ? ('<b>Files:</b> ' + links.map(function(u){ return '<a href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(decodeURIComponent(u.split("/files/")[1]||u))+'</a>'; }).join("")) : (act ? '<span style="color:var(--mut)">action has no file path</span>' : '');
+  $("modal").classList.add("show");
+}
+$("mClose").onclick = function(){ $("modal").classList.remove("show"); };
+$("modal").addEventListener("click", function(e){ if(e.target.id==="modal") $("modal").classList.remove("show"); });
+document.addEventListener("keydown", function(e){ if(e.key==="Escape") $("modal").classList.remove("show"); });
+
+function previewOf(o){
+  o = o || {}; var parts = [], imgs = [];
+  if(o.engine) parts.push("engine: "+o.engine);
+  var od = o.outreach_draft || o.email_draft;
+  if(od && typeof od === "object"){ parts.push("✉ "+(od.to?("to: "+od.to+"\n"):"")+"subject: "+(od.subject||"")+"\n\n"+(od.body||"")); }
+  if(Array.isArray(o.shortlist)) parts.push("shortlist: "+o.shortlist.map(function(c){return (c.initials||c.name||c.candidate_id)+(c.score!=null?" ("+c.score+")":"");}).join(", "));
+  if(o.verdict) parts.push("QA verdict: "+o.verdict+(o.score!=null?" · score "+o.score:"")+(o.kind?" · kind "+o.kind:"")+(o.for_dept?" · for "+o.for_dept:""));
+  if(o.revision_note) parts.push("revision note: "+o.revision_note+(o.revision?" (rev "+o.revision+")":""));
+  ["subject","to","content","draft","outreach","email","body","caption","text","message","reply"].forEach(function(k){
+    var v = o[k]; if(v==null) return;
+    if(typeof v === "object") v = JSON.stringify(v, null, 1);
+    parts.push(k+": "+v);
+  });
+  collectFiles(o).forEach(function(u){ if(/\.(svg|png|jpe?g|gif|webp)(\?|$)/i.test(u)) imgs.push(u); });
+  var txt = parts.join("\n\n");
+  if(!txt && !imgs.length){ var j = JSON.stringify(o, null, 1); txt = j.length>600 ? j.slice(0,600)+" …" : j; }
+  var bc = brandChips(o);
+  return (bc ? '<div style="display:flex;gap:4px;flex-wrap:wrap">'+bc+'</div>' : '')+'<div class="pv">'+esc(txt)+(imgs.length?'<div>'+imgs.slice(0,4).map(function(u){return '<img src="'+esc(u)+'" alt="asset">';}).join("")+'</div>':'')+'</div>';
+}
+function reasonsOf(task){
+  var r = [];
+  events.forEach(function(e){ if(e.task_id===task && e.dept==="qa" && e.output){ var x = e.output.reasons || (e.output.qa && e.output.qa.reasons); if(x) r = [].concat(x); } });
+  return r;
+}
+function renderApprovals(pend){
+  $("apCount").textContent = pend.length;
+  var sig = pend.map(function(p){return p.task_id+p.since;}).join(",") + "|" + events.length;
+  if(sig === lastApSig) return; lastApSig = sig;
+  // keep any notes being typed
+  document.querySelectorAll("#aps textarea").forEach(function(t){ notes[t.getAttribute("data-t")] = t.value; });
+  var focused = document.activeElement && document.activeElement.tagName==="TEXTAREA" ? document.activeElement.getAttribute("data-t") : null;
+  if(!pend.length){ $("aps").innerHTML = '<div class="empty">Nothing waiting. The QA gate routes refunds, pricing, legal wording and first contact here.</div>'; return; }
+  $("aps").innerHTML = pend.map(function(p){
+    var rs = reasonsOf(p.task_id);
+    return '<div class="ap"><div class="h"><b>'+esc(p.dept)+'</b><span class="badge '+(p.mode==="live"?"b-live":"b-mock")+'">'+esc(String(p.mode).toUpperCase())+'</span><span class="chip">'+esc(p.task_id)+'</span><span class="chip">waiting '+esc(ago(p.since))+'</span></div>'+
+      '<div class="sum">'+esc(p.summary)+'</div>'+
+      (rs.length ? '<div class="rs">QA: '+rs.map(esc).join(" · ")+'</div>' : '')+
+      previewOf(p.output)+
+      '<textarea data-t="'+esc(p.task_id)+'" placeholder="Note to the department (optional)">'+esc(notes[p.task_id]||"")+'</textarea>'+
+      '<div class="btns"><button class="ok" data-a="approved" data-t="'+esc(p.task_id)+'">✓ Approve</button><button class="bad" data-a="rejected" data-t="'+esc(p.task_id)+'">✗ Reject</button>'+
+      '<button data-v="'+esc(p.task_id)+'">Details</button></div></div>';
+  }).join("");
+  window.__pend = pend;
+  if(focused){ var t = document.querySelector('#aps textarea[data-t="'+focused+'"]'); if(t){ t.focus(); t.selectionStart = t.selectionEnd = t.value.length; } }
+}
+$("aps").addEventListener("click", function(ev){
+  var b = ev.target.closest("button"); if(!b) return;
+  var v = b.getAttribute("data-v");
+  if(v){ var p = (window.__pend||[]).filter(function(x){return x.task_id===v;})[0]; if(p) openModal("Pending · "+p.task_id, p); return; }
+  var t = b.getAttribute("data-t"), a = b.getAttribute("data-a"); if(!t||!a) return;
+  var ta = document.querySelector('#aps textarea[data-t="'+t+'"]'); var note = ta ? ta.value : "";
+  b.parentNode.querySelectorAll("button").forEach(function(x){x.disabled=true;});
+  post("/api/approvals/"+encodeURIComponent(t), {decision:a, note:note}).then(function(){
+    msg("Founder "+a+" "+t+". The department acts on it next; watch the feed.");
+    delete notes[t]; lastApSig=""; tick();
+  }).catch(function(e){ msg("Could not record decision for "+t+": "+e.message, true); lastApSig=""; tick(); });
+});
+
+function renderKpis(k){
+  var tasks = 0, depts = {};
+  (k.tasks_by_dept_status||[]).forEach(function(r){ tasks += (r.tasks||r.n||r.count||0); depts[r.dept]=1; });
+  var avg = k.avg_time_to_done_sec && k.avg_time_to_done_sec.overall;
+  var items = [
+    [Object.keys(depts).length ? (k.tasks_by_dept_status||[]).length : 0, "dept × status rows"],
+    [(k.pending_founder_approvals||{}).count||0, "pending founder approvals"],
+    [avg==null ? "—" : (avg<120 ? Math.round(avg)+" s" : (avg/60).toFixed(1)+" min"), "avg time to done"],
+    [k.replies_sent_while_founder_away||0, "replies sent while founder away"]
+  ];
+  if(k.actions_executed!=null){ var a=k.actions_executed; items.push([typeof a==="object" ? ((a.auto||0)+" / "+(a.founder||0)) : a, "actions executed (auto / founder)"]); }
+  if(tasks) items[0] = [tasks, "tasks tracked"];
+  $("kpis").innerHTML = items.map(function(x){return '<div class="kpi"><div class="v">'+esc(x[0])+'</div><div class="l">'+esc(x[1])+'</div></div>';}).join("");
+  var rows = k.tasks_by_dept_status||[];
+  if(rows.length){
+    var cols = Object.keys(rows[0]);
+    $("kpiTable").innerHTML = '<table><tr>'+cols.map(function(c){return '<th>'+esc(c)+'</th>';}).join("")+'</tr>'+rows.map(function(r){return '<tr>'+cols.map(function(c){return '<td>'+esc(r[c])+'</td>';}).join("")+'</tr>';}).join("")+'</table>';
+  } else $("kpiTable").innerHTML = "";
+  setAway(!!k.founder_away);
+}
+
+function renderRules(r){
+  var list = Array.isArray(r) ? r : (r.rules || r.items || []);
+  if(!list.length){ $("rules").innerHTML = '<div class="empty">No rules reported.</div>'; return; }
+  var pick = function(o, ks){ for(var i=0;i<ks.length;i++){ if(o[ks[i]]!=null) return o[ks[i]]; } return ""; };
+  $("rules").innerHTML = '<table><tr><th>#</th><th>when</th><th>then</th></tr>'+list.map(function(x, i){
+    if(typeof x !== "object") return '<tr><td>'+(i+1)+'</td><td colspan="2">'+esc(x)+'</td></tr>';
+    var name = pick(x,["name","id","rule"]), when = pick(x,["when","trigger","pattern","match","on"]), then = pick(x,["then","action","handler","do","description"]);
+    var fmt = function(v){ return typeof v === "object" ? '<code>'+esc(JSON.stringify(v))+'</code>' : esc(v); };
+    return '<tr><td>'+(i+1)+(name?'<div style="color:var(--mut);font-size:11px">'+esc(name)+'</div>':'')+'</td><td>'+fmt(when)+'</td><td>'+fmt(then)+(x.description && then!==x.description ? '<div style="color:var(--mut)">'+esc(x.description)+'</div>':'')+'</td></tr>';
+  }).join("")+'</table>';
+}
+var rulesOk = false, rulesTries = 0;
+function loadRules(){
+  if(rulesOk || rulesTries > 40) return; rulesTries++;
+  get("/api/automation/rules").then(function(r){ rulesOk = true; renderRules(r); })
+    .catch(function(e){ $("rules").innerHTML = '<div class="empty">Automation engine not reporting rules yet ('+esc(e.status ? "HTTP "+e.status : "offline")+'). Retrying…</div>'; });
+}
+
+function setAway(on){
+  awayState = on; $("away").classList.toggle("on", on);
+  $("awayLbl").textContent = on ? "Founder AWAY (laptop closed)" : "Founder present";
+}
+$("away").onclick = function(){
+  var want = !awayState;
+  post("/api/founder/away", {away: want}).then(function(){ setAway(want); msg(want ? "Founder is away. Bots keep answering; only gated items wait in the queue." : "Founder is back."); tick(); })
+    .catch(function(e){ msg("Toggle failed: "+e.message, true); });
+};
+$("demo").onclick = function(){
+  var b = $("demo"); b.disabled = true;
+  post("/api/demo/seed", {}).then(function(r){ msg("Demo scenario started"+(r && r.started ? ": "+[].concat(r.started).join(", ") : "")+". Watch the feed."); })
+    .catch(function(e){ msg(e.status===404 ? "Demo seed isn't installed yet (POST /api/demo/seed returned 404). Run ./demo.sh on the box instead." : "Demo failed: "+e.message, e.status!==404); })
+    .then(function(){ setTimeout(function(){ b.disabled=false; }, 3000); tick(); });
+};
+
+function renderHealth(h){
+  health = h;
+  var live = h && h.xai_key;
+  $("bMock").className = "banner " + (live ? "live" : "mock");
+  var m = (h && h.modes) || {};
+  $("bMock").textContent = live
+    ? "LIVE AI available (XAI_API_KEY set). Per-dept modes: " + Object.keys(m).map(function(k){return k+"="+m[k];}).join(", ") + ". Each event still shows its own MOCK/LIVE badge."
+    : "MOCK mode: no XAI_API_KEY set. HR and Design output is placeholder (not AI generated); QA runs deterministic rules only; Data/Ops is live.";
+}
+
+var busy = false;
+function tick(){
+  if(busy) return; busy = true;
+  Promise.all([
+    get("/api/events?limit=400").then(function(r){ events = r.events || []; renderTiles(); renderFeed(); firstLoad = false; return true; }),
+    get("/api/approvals?pending=true").then(function(r){ renderApprovals(r.pending || []); }),
+    get("/api/ops/kpis").then(renderKpis),
+    get("/health").then(renderHealth)
+  ]).then(function(){ $("conn").className="conn"; $("conn").innerHTML = 'service: <b>live</b> · '+(sseOk ? 'push (SSE)' : 'polling 2 s')+' · '+esc(new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"}))+' CT'; })
+    .catch(function(e){ $("conn").className="conn down"; $("conn").innerHTML = 'service: <b>unreachable</b> ('+esc(e.message)+')'; })
+    .then(function(){ busy = false; });
+  loadRules();
+}
+// N01: SSE push (GET /api/stream) for instant updates; 2 s polling always keeps running as the fallback/consistency pass.
+var sse = null, sseOk = false, sseRetry = 0, pendT = null;
+function evKey(e){ return e.ts+"|"+e.task_id+"|"+e.status+"|"+e.dept; }
+function startSSE(){
+  if(!window.EventSource || sseRetry > 5) return;
+  try { sse = new EventSource(API + "/api/stream"); } catch(e){ return; }
+  sse.addEventListener("open", function(){ sseOk = true; sseRetry = 0; });
+  sse.addEventListener("event", function(m){
+    window.__sseCount = (window.__sseCount||0) + 1;
+    var e; try { e = JSON.parse(m.data); } catch(x){ return; }
+    if(!e || !e.task_id) return;
+    var k = evKey(e);
+    for(var i=events.length-1;i>=0 && i>=events.length-120;i--){ if(evKey(events[i])===k) return; }
+    events.push(e); if(events.length > 400) events = events.slice(-400);
+    renderTiles(); renderFeed();
+    clearTimeout(pendT); pendT = setTimeout(tick, 150); // refresh queue + KPIs right after a push
+  });
+  sse.addEventListener("error", function(){
+    sseOk = false;
+    if(sse && sse.readyState === 2){ sse = null; sseRetry++; setTimeout(startSSE, 3000); } // closed: polling covers it meanwhile
+  });
+}
+
+// QA reliability tile (W3 X08: GET /api/qa/reliability, POST /api/qa/reliability/run)
+var relT = 0, relPoll = null;
+function loadRel(){
+  get("/api/qa/reliability").then(function(r){
+    if(!r || r.total == null){ $("rel").innerHTML = '<div class="empty">'+(r && r.running ? "suite running…" : "suite has not run yet")+'</div>'; }
+    else {
+      var pct = Math.round((r.pass_rate||0)*1000)/10, col = pct >= 95 ? "var(--ok)" : (pct >= 80 ? "var(--warn)" : "var(--bad)");
+      var fails = (r.cases||[]).filter(function(c){ return !c.pass; });
+      $("rel").innerHTML = '<div class="kpis"><div class="kpi"><div class="v" style="color:'+col+'">'+esc(r.passed)+' / '+esc(r.total)+'</div><div class="l">golden cases passed ('+esc(pct)+'%)</div></div>'+
+        '<div class="kpi"><div class="v" style="font-size:18px">'+esc(fmtT(r.ran_at))+'</div><div class="l">last run · '+esc(r.duration_sec)+' s'+(r.running?' · re-running…':'')+'</div></div></div>'+
+        '<div style="font-size:12px;color:var(--mut);margin-top:6px">'+esc(r.runner||"")+' · '+esc(r.asserts||"")+'</div>'+
+        (fails.length ? '<div class="rs">Failing: '+fails.map(function(c){return esc(c.id+" "+(c.description||"")+(c.reason?" ("+c.reason+")":""));}).join(" · ")+'</div>' : '');
+    }
+    if(r && r.running){ if(!relPoll) relPoll = setInterval(loadRel, 3000); }
+    else if(relPoll){ clearInterval(relPoll); relPoll = null; $("relRun").disabled = false; }
+  }).catch(function(e){ $("rel").innerHTML = '<div class="empty">reliability endpoint not available ('+esc(e.status ? "HTTP "+e.status : "offline")+')</div>'; });
+}
+$("relRun").onclick = function(){
+  $("relRun").disabled = true;
+  post("/api/qa/reliability/run", {}).then(function(){ msg("QA golden suite started (~30 s)."); if(!relPoll) relPoll = setInterval(loadRel, 3000); loadRel(); })
+    .catch(function(e){ $("relRun").disabled = false; msg("Could not start suite: "+e.message, true); });
+};
+// Ask ops box (W3 X06: POST /api/ops/ask {question})
+$("askF").addEventListener("submit", function(ev){
+  ev.preventDefault(); var q = $("askQ").value.trim(); if(!q) return;
+  $("askA").innerHTML = '<div class="empty">asking…</div>';
+  post("/api/ops/ask", {question: q}).then(function(r){
+    var badge = r.mode === "live" ? '<span class="badge b-live">LIVE</span>' : '<span class="badge b-mock">MOCK</span>';
+    $("askA").innerHTML = '<div class="pv" style="white-space:normal"><div style="font-size:18px;font-weight:700">'+esc(r.answer || r.error || "no answer")+'</div>'+
+      '<div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+badge+(r.metric?'<span class="chip">metric: '+esc(r.metric)+'</span>':'')+'<span class="chip">'+esc(r.engine||"")+'</span></div>'+
+      (r.description?'<div style="color:var(--mut);margin-top:4px">'+esc(r.description)+'</div>':'')+
+      (r.sql?'<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--acc)">SQL that ran</summary><pre style="white-space:pre-wrap;margin:6px 0 0">'+esc(r.sql)+'</pre></details>':'')+'</div>';
+  }).catch(function(e){ $("askA").innerHTML = '<div class="empty">'+(e.status===404 ? "ops ask endpoint not installed yet" : "error: "+esc(e.message))+'</div>'; });
+});
+loadRel(); setInterval(loadRel, 15000);
+renderTiles(); renderFeed(); tick(); setInterval(tick, 2000); startSSE();
+})();
+</script>
+</body>
+</html>
+
+<!-- W3 note (6:59 PM CT) for W2: please add (1) a "QA reliability" tile from GET /api/qa/reliability (passed/total, pass_rate, ran_at; button POST /api/qa/reliability/run then poll until running:false) and (2) an "Ask ops" box: POST /api/ops/ask {question} -> show answer, metric, collapsible sql, engine label + MOCK badge when mode=mock. Details in INTERFACES.md. -->

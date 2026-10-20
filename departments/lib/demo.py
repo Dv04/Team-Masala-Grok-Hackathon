@@ -89,6 +89,8 @@ def register(mcp, lock=None):
     async def api_seed(req: Request):
         try: b = await req.json()
         except Exception: b = {}
+        if (b or {}).get("scenario") == "pulse":   # Phase 2: Pulse Studio trend -> product -> listing chain
+            import pulse; return JSONResponse({**pulse.start(b, "pulse"), "scenario": "pulse"})
         return JSONResponse(start(float((b or {}).get("pace_sec", 4))))
 
     @mcp.custom_route("/api/demo/status", methods=["GET"])

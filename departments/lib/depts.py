@@ -1,5 +1,11 @@
 """HR (dept 10) and Design (dept 11) adapters.
 Live path only when XAI_API_KEY is set; otherwise clearly labeled mock output."""
+# All 13 departments (tile number -> dept id, name, owner). dev3 confirmed 7 finance, 8 legal, 9 integrations (7:12 PM CT).
+DEPARTMENTS = {1: ("orchestrator", "Orchestrator / Chief of Staff", "dev1"), 2: ("research", "Research & strategy", "dev1"),
+               3: ("marketing", "Marketing & content", "dev1"), 4: ("sales", "Sales", "dev2"), 5: ("support", "Support", "dev2"),
+               6: ("engineering", "Engineering", "dev2"), 7: ("finance", "Finance", "dev3"), 8: ("legal", "Legal", "dev3"),
+               9: ("integrations", "Integrations", "dev3"), 10: ("hr", "HR", "dev4"), 11: ("design", "Design", "dev4"),
+               12: ("ops", "Data / Ops", "dev4"), 13: ("qa", "QA / approval gate", "dev4")}
 import asyncio, hashlib, json, os, re
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.streamable_http import streamablehttp_client

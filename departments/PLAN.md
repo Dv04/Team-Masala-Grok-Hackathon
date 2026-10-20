@@ -107,3 +107,20 @@ Source reports: `/workspace/hackathon-2026/repo-scout/1{0,1,2,3}-*.md`.
 | Data/ops 12 | | **Governed metrics / NL questions** | Canner/WrenAI · Apache-2.0 (concept: semantic layer, not the engine) | `data/metrics.yaml` names each KPI with its SQL. New `ops.ask` (MCP + `/api/ops/ask`): live = Grok picks a metric or writes SQL restricted to the `events` view; mock = keyword match to a named metric. The answer cites which metric/SQL ran |
 | QA 13 | own rule gate + promptfoo MCP (MIT) | **Second judge: hallucination + correctness prompts** | langchain-ai/openevals · MIT | when keyed, `qa.check` also runs openevals `HALLUCINATION_PROMPT` against `context`; score = min(rules, rubric, openevals). Without a key: `"skipped (no XAI_API_KEY)"` |
 | QA 13 | (primary repo extension) | **Golden regression suite / reliability tile** | promptfoo · MIT (deterministic asserts: `contains`, `regex`, `is-json`, `javascript`, no key) | `qa/golden.yaml` holds ~15 known-good and known-bad outputs, and promptfoo eval runs them against `/api/qa/check`. The pass rate shows as a "QA reliability" tile, which proves the gate itself is tested |
+
+## Phase 2: Pulse Studio (trend-to-product brand), added 7:12 PM CT, freeze 7:30 PM CT
+
+Product: merch/digital goods made from whatever is trending right now. Demo wow: a product that did not exist when the
+pitch started is for sale (Stripe **test mode**, MOCK print-on-demand) by the end.
+
+Chain (all automatic after ONE trigger, lib/pulse.py rules registered via lib/chains.py into the lib/auto.py engine):
+1. `trend_spotted` (research / grok-routine / `POST /api/pulse/start`, actor `pulse`) output `{trend, why, source: x|backup|manual}`
+2. Design -> `product_created` {product_type sticker|tee|poster, title, tagline, price_usd, cost_usd, image (MOCK SVG in
+   data/design-out/)} with the brand-score + retry-once loop (lib/design_loop.py scorer).
+3. QA product gate: fail on trademark/brand names, PII, offensive keywords; founder on price outside $5-$60 or margin < 30%.
+4. Pass / founder approve -> listing page data/published/<task>/index.html ("Buy (Stripe test mode)" -> mock order) and a
+   `listing_live` event, fanned out to sales/engineering/marketing webhooks.
+5. Ops: `POST /api/ops/order` -> MOCK print-on-demand record data/ops/orders.jsonl, `order_placed` + `margin_update` events,
+   metrics orders_count / revenue_usd / margin_pct, KPIs under `pulse` in /api/ops/kpis.
+6. Backup trends data/trends/backup.json in case X is quiet. Demo: `POST /api/demo/seed {"scenario":"pulse"}`.
+Owners for the rest: Trend (dev1 research), Launch/landing (dev2 engineering/sales), Marketing posts (dev1), Finance (dev3).

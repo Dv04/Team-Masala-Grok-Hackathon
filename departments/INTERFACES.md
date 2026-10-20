@@ -101,3 +101,42 @@ lib/ is on sys.path, so `import events, auto, actions, depts, qa, ops`.
 - Wired: SSE /api/stream (+2 s polling fallback), QA reliability tile (GET /api/qa/reliability, Re-run -> POST /api/qa/reliability/run),
   Ask ops box (POST /api/ops/ask), brand_score chips on design events/approvals, dept names 1-3 (orchestrator, research, marketing; aliases chief_of_staff, strategy, content).
   Tiles count from the last 400 events; feed shows newest 50. Slots 7-9 stay generic; any unknown dept that posts takes the next free one under its real name.
+
+## Phase 2: Pulse Studio (trend-to-product brand), 7:20 PM CT
+
+One trigger runs the whole chain (rules in `lib/pulse.py` + `lib/standins.py`, registered in the `lib/auto.py` engine):
+`trend_spotted` -> Design `product_created` (MOCK SVG, brand score + retry once) -> QA product gate -> `listing_live` page
+-> `POST /api/ops/order` -> `order_placed` + `margin_update`. All output is **MOCK**; payments are **Stripe test mode
+labels only** (no Stripe call, no charge); print-on-demand is a MOCK provider writing `data/ops/orders.jsonl`.
+
+| Endpoint | Body | Does |
+|---|---|---|
+| `POST /api/pulse/start` | `{trend?, why?, source? x\|backup\|manual, product_type?, price_usd?, cost_usd?, force_low_score?, backup_index?}` | Emits `trend_spotted` (dept research, actor `pulse`). No trend -> `data/trends/backup.json` (source backup) |
+| `GET /api/pulse/trends` | | Backup trends |
+| `GET /api/pulse/listings` | | live listings (newest first) + ops totals, for `/store` |
+| `GET /store` | | storefront `static/store.html` (placeholder if missing) |
+| `POST /api/ops/order` | `{task_id: <product task with listing_live>, qty 1..20}` | MOCK POD order + `order_placed` + `margin_update` (`computed_by: ops`); 404 if no listing |
+| `POST /api/demo/seed` | `{"scenario":"pulse", ...same as pulse/start}` | Pulse demo trigger (old demo without scenario) |
+| `GET /api/ops/kpis` | | now includes `pulse: {orders_count, revenue_usd, cost_usd, profit_usd, margin_pct, computed_by: ops}` |
+| `POST /api/approvals/{task}` | `{decision: approved\|rejected\|approve\|reject, note}` | both spellings accepted |
+| `POST /api/ops/ask` | `{question}` or `{q}` | new metrics: `orders_count`, `revenue_usd`, `margin_pct` |
+MCP tools: `pulse.start`, `ops.order`.
+
+QA product gate (`pulse.product_rules` + `qa.check` PII/banned rules): **fail** on trademark/IP names (Nike, Disney, Marvel,
+Apple, ... see `TRADEMARKS`), offensive keywords, PII; **founder** on price outside $5-$60 or margin < 30%; founder approve
+-> listing published (`executed_by: founder`), reject -> failed.
+
+Event kinds (output.kind): `trend_spotted` {trend, why, source}, `product_brief`, `design_regenerate`, `product_created`
+{product_type, title, tagline, price_usd, cost_usd, image, image_url, brand_score, attempts}, `product_blocked`, `listing_live`
+{product, url, action.type=listing_publish}, `order_placed` {order_id, listing_task, qty, revenue_usd, cost_usd, payment.mode=test},
+`margin_update` {computed_by ops|finance|finance-standin, margin_pct, totals}. Teammate kinds accepted as-is: `trend_accepted`,
+`legal_precheck`, `posts_drafted`, `chain_stalled` (integrations). `listing_live` is also posted to sales/engineering/marketing webhooks.
+
+Departments 7-9 (dev3): **finance**, **legal**, **integrations** (`lib/depts.py DEPARTMENTS`, dashboard v2 tiles).
+
+**Stand-ins** (`lib/standins.py`, `STANDINS=1` default, `STANDIN_WAIT=8`, `STANDIN_STALL=30`): if a teammate's dept hasn't
+emitted its step within the wait, dev4 does it, with `actor: standin-dev4`, `output.standin: true`, mode mock; any real event
+from that dept referencing the trigger task cancels it. research `trend_accepted`; legal pre-check + `qa.check` -> `legal_precheck`;
+engineering + sales `listing_live` (url); marketing 3 MOCK drafts `data/published/<task>/posts.md` (never posted); support one
+canned buyer Q&A through QA (needs_qa); finance `margin_update` on `order_placed`; integrations `chain_stalled` if no
+listing/blocked/founder step after 30s. Files: listing `/files/published/<task>/index.html`, art `/files/design-out-data/<file>`.

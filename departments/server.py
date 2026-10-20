@@ -76,6 +76,7 @@ def _pending():
     return out
 
 def _decide(task_id, decision, note=""):
+    decision = {"approve": "approved", "reject": "rejected"}.get(str(decision).strip().lower(), str(decision).strip().lower())
     if decision not in ("approved", "rejected"): raise ValueError("decision must be 'approved' or 'rejected'")
     p = [x for x in _pending() if x["task_id"] == task_id]
     if not p: raise LookupError(f"task {task_id} is not pending founder approval")
@@ -87,6 +88,9 @@ def _decide(task_id, decision, note=""):
 def _kpis():
     """ops.kpis, with pending approvals computed by the same logic as GET /api/approvals (single source of truth)."""
     k = ops.kpis(); p = _pending()
+    try:
+        import pulse; k["pulse"] = pulse.totals()   # Pulse Studio orders/revenue/margin (MOCK POD), computed by ops
+    except Exception as e: k["pulse"] = {"error": f"{type(e).__name__}: {e}"[:200]}
     k["pending_founder_approvals"] = {"count": len(p), "items": [{"task_id": x["task_id"], "dept": x["dept"],
                                       "summary": x["summary"], "since": x["since"]} for x in p]}
     return k
@@ -224,15 +228,24 @@ async def dashboard(req: Request):
     if os.path.isfile(f): return FileResponse(f, media_type="text/html", headers={"Cache-Control": "no-store"})
     return HTMLResponse(PLACEHOLDER)
 
+@mcp.custom_route("/store", methods=["GET"])
+async def store(req: Request):  # Pulse Studio storefront (static/store.html by the Designer bot)
+    f = f"{ROOT}/static/store.html"
+    if os.path.isfile(f): return FileResponse(f, media_type="text/html", headers={"Cache-Control": "no-store"})
+    return HTMLResponse("""<!doctype html><html><head><meta charset=utf-8><title>Pulse Studio store (placeholder)</title></head>
+<body style="font-family:sans-serif;background:#0b0b1a;color:#eee"><h1>Pulse Studio</h1><p>MOCK store, Stripe TEST MODE. Storefront page
+(static/store.html) not built yet. Live listings: <a style="color:#22d3ee" href="/api/events?limit=200">events</a> (kind listing_live,
+open output.url).</p></body></html>""")
+
 @mcp.custom_route("/", methods=["GET"])
 async def root(req: Request):
     from starlette.responses import RedirectResponse
     return RedirectResponse("/dashboard")
 
 FILE_ROOTS = {"published": f"{ROOT}/data/published", "outbox": f"{ROOT}/data/outbox", "design-out": f"{ROOT}/design-out",
-              "onboarding": f"{ROOT}/data/hr/onboarding"}
+              "onboarding": f"{ROOT}/data/hr/onboarding", "design-out-data": f"{ROOT}/data/design-out"}
 TYPES = {".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
-         ".json": "application/json", ".eml": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8"}
+         ".json": "application/json", ".html": "text/html; charset=utf-8", ".eml": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8"}
 
 @mcp.custom_route("/files/{path:path}", methods=["GET"])
 async def files(req: Request):
@@ -272,7 +285,7 @@ async def api_stream(req: Request):
 
 # ---------- W3 modules (one line each; never break startup) ----------
 import importlib, traceback
-for _m in ("inbound", "sched", "chains", "demo", "qa_golden", "ops_ask"):
+for _m in ("inbound", "sched", "chains", "demo", "qa_golden", "ops_ask", "pulse", "standins"):
     try:
         importlib.import_module(_m).register(mcp); print(f"MODULE {_m} registered", flush=True)
     except ModuleNotFoundError as _e:
