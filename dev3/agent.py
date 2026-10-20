@@ -89,14 +89,19 @@ def finance_margin(order, by_id=None):
     pick = lambda *keys: next((v for v in (num(x, *keys) for x in srcs) if v is not None), None)
     qty = pick("qty", "quantity") or 1.0
     price = pick("price_usd", "price", "unit_price")
-    cost = pick("cost_usd", "pod_cost", "unit_cost", "cost")
-    if price is None or cost is None:
-        missing = [n for n, v in (("price", price), ("pod_cost", cost)) if v is None]
+    # Per-unit cost first (order unit_cost_usd, then product/listing cost_usd). The order's own top-level cost_usd is the
+    # ORDER TOTAL on the hub (qty x unit), so it is used as-is and never multiplied by qty again.
+    cost = pick("unit_cost_usd", "unit_cost", "pod_cost")
+    if cost is None:
+        cost = next((v for v in (num(x, "cost_usd", "cost") for x in srcs[1:]) if v is not None), None)
+    total_cost = num(srcs[0], "cost_usd", "cost") if cost is None else None
+    if price is None or (cost is None and total_cost is None):
+        missing = [n for n, v in (("price", price), ("pod_cost", cost if cost is not None else total_cost)) if v is None]
         return {"kind": "margin_update", "ok": False, "missing": missing, "order_task": order["task_id"],
                 "reason": f"order_placed is missing {missing}; margin not computed (never guessed)"}
     revenue = round(price * qty, 2)
     fees = round(revenue * FEE_PCT + FEE_FIXED, 2)
-    cogs = round(cost * qty, 2)
+    cogs = round(cost * qty, 2) if cost is not None else round(total_cost, 2)
     margin = round(revenue - cogs - fees, 2)
     pct = round(margin / revenue, 4) if revenue else 0.0
     return {"kind": "margin_update", "ok": True, "order_task": order["task_id"], "qty": qty, "revenue": revenue,
