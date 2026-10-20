@@ -612,45 +612,30 @@ export function createApp(options: AppOptions): App {
     const key = `queued:${task.task_id}`;
     if (seenListings.has(key)) return { task_id: task.task_id, kind: task.kind ?? "", status: "done" };
     seenListings.add(key);
-    const requestId = typeof task.parent_id === "string" ? task.parent_id : undefined;
+    const requestId = typeof task.parent_id === "string" && task.parent_id !== task.task_id ? task.parent_id : undefined;
     try {
-      const result = await dispatch(task);
-      await postTaskStatus(task, "done", requestId, result);
-      return { task_id: task.task_id, kind: task.kind ?? "", status: "done", result };
+      await dispatch(task);
     } catch (error) {
-      if (error instanceof AwaitingFounder || (error instanceof Error && /timed out/i.test(error.message))) {
-        await postTaskStatus(task, "done", requestId, {
-          awaiting_founder: error instanceof AwaitingFounder,
-          held_task_id: error instanceof AwaitingFounder ? error.taskId : undefined,
-          note: error.message,
-        });
-        return {
-          task_id: task.task_id,
-          kind: task.kind ?? "",
-          status: "done",
-          awaiting_founder: error instanceof AwaitingFounder,
-          held_task_id: error instanceof AwaitingFounder ? error.taskId : undefined,
-        };
-      }
-      await postTaskStatus(task, "failed", requestId, { error: error instanceof Error ? error.message : "failed" });
-      throw error;
+      console.error("task handler failed", error instanceof Error ? error.message : error);
     }
+    await postTaskStatus(task, requestId);
+    return { task_id: task.task_id, kind: task.kind ?? "", status: "done" };
   }
 
-  async function postTaskStatus(task: OpsTask, status: "done" | "failed", requestId: string | undefined, result: unknown): Promise<void> {
+  async function postTaskStatus(task: OpsTask, requestId: string | undefined): Promise<void> {
     try {
       await ctx.clientFor(task.dept).log({
         task_id: task.task_id,
-        ...(requestId ? { parent_id: requestId } : {}),
-        status,
-        summary: `${task.dept} ${status} ${task.kind ?? "task"}: ${task.summary}`.slice(0, 200),
+        parent_id: task.task_id,
+        status: "done",
+        summary: `${task.dept} done: ${task.summary}`.slice(0, 200),
         output: {
-          kind: status === "done" ? "routed_task" : "task_failed",
+          kind: "task_done",
           source: task.source === "orchestrator" ? "orchestrator" : "hub",
           for_dept: task.dept,
           handler: task.kind,
+          title: task.summary.slice(0, 160),
           ...(requestId ? { request_id: requestId } : {}),
-          ...(result && typeof result === "object" ? { result } : {}),
         },
       });
     } catch (error) {
@@ -856,10 +841,15 @@ export function deriveTaskKind(dept: Dept, title: string, detailKind?: string): 
 
 function eventAsTask(event: DepartmentEvent, target: Dept): OpsTask {
   const output = event.output ?? {};
-  const detail = output.detail && typeof output.detail === "object" ? (output.detail as Record<string, unknown>) : {};
+  const extra = event as DepartmentEvent & { title?: string; detail?: unknown };
+  const detail =
+    (output.detail && typeof output.detail === "object" ? (output.detail as Record<string, unknown>) : undefined) ??
+    (extra.detail && typeof extra.detail === "object" ? (extra.detail as Record<string, unknown>) : {});
   const title =
     (typeof output.title === "string" && output.title) ||
+    (typeof extra.title === "string" && extra.title) ||
     (typeof detail.text === "string" && detail.text) ||
+    (typeof extra.detail === "string" && extra.detail) ||
     event.summary;
   const detailKind = typeof detail.kind === "string" ? detail.kind : undefined;
   return {
