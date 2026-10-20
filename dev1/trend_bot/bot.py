@@ -3,11 +3,16 @@
 Live: Grok Responses API with x_search and web_search.
 No key, or an unusable reply: fixtures/backup_trend.json and mode=mock.
 source stays "x" either way so dev4's Pulse chain starts. mode is the honesty bit.
+
+`python -m trend_bot` is the one-shot. `python -m trend_bot --serve` polls queued
+non-pulse research tasks and posts research_task_done. find_trend() looks up a
+trend and does not post.
 """
 import json
 import os
 import re
 import sys
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -90,15 +95,22 @@ def open_research_task(events: EventsClient):
 
 
 def _trend_of(events: EventsClient, trend_task: str):
+    """Return (trend_spotted output, mode) for the pulse trend being accepted."""
     try:
         rows = (events.get_events(task_id=trend_task, limit=20) or {}).get("events") or []
     except (EventError, OSError):
         rows = []
     for ev in rows:
+        if not isinstance(ev, dict):
+            continue
         out = ev.get("output") or {}
-        if out.get("kind") == "trend_spotted":
-            return out
-    return {}
+        if not isinstance(out, dict) or out.get("kind") != "trend_spotted":
+            continue
+        mode = ev.get("mode") if ev.get("mode") in ("live", "mock") else out.get("mode")
+        if mode not in ("live", "mock"):
+            mode = "mock"
+        return out, mode
+    return {}, "mock"
 
 
 def load_backup() -> tuple[str, str]:
@@ -130,6 +142,47 @@ def parse_trend(text: str) -> tuple[str, str] | None:
     return trend[:180], why[:500]
 
 
+_DEFAULT_QUERY = "what people on X want as a sticker, tee, or poster right now"
+
+
+def find_trend(
+    query: str | None = None,
+    *,
+    settings: Settings | None = None,
+    grok: GrokClient | None = None,
+) -> dict:
+    """Look up one trend and return it. Does not post an event.
+
+    Live Grok via common.grok when XAI_API_KEY is set and the reply parses.
+    Otherwise fixtures/backup_trend.json with mode mock. source is x either way.
+    """
+    settings = settings or load_settings()
+    grok = grok or GrokClient(settings)
+    hint = (query or "").strip() or _DEFAULT_QUERY
+    trend = why = None
+    mode = "mock"
+    if grok.mode == "live":
+        try:
+            result = grok.respond(
+                _prompt(hint),
+                tools=[{"type": "x_search"}, {"type": "web_search"}],
+            )
+            parsed = parse_trend(result.text) if result.mode == "live" else None
+            if parsed:
+                trend, why = redact(parsed[0]), redact(parsed[1])
+                if trend and why and "[redacted]" not in trend:
+                    mode = "live"
+                else:
+                    trend = why = None
+        except (GrokError, OSError, ValueError):
+            trend = why = None
+    if trend is None:
+        trend, why = load_backup()
+        trend, why = redact(trend), redact(why)
+        mode = "mock"
+    return {"trend": trend, "why": why, "source": "x", "mode": mode}
+
+
 def _prompt(query: str) -> str:
     return (
         "You are Pulse Studio research. Use x_search to find one thing trending on X "
@@ -141,7 +194,7 @@ def _prompt(query: str) -> str:
 
 
 def spot(
-    query: str = "what people on X want as a sticker, tee, or poster right now",
+    query: str = _DEFAULT_QUERY,
     *,
     settings: Settings | None = None,
     grok: GrokClient | None = None,
@@ -156,14 +209,14 @@ def spot(
         # The orchestrator's /api/pulse/start already started a chain. Accept that trend on the
         # routed task (closes it) instead of starting a second chain with another trend.
         trend_task = task["detail"]["trend_task"]
-        prior = _trend_of(events, trend_task)
+        prior, accepted_mode = _trend_of(events, trend_task)
         trend = redact(str(prior.get("trend") or ""))[:180]
         accepted = events.post_event(
             dept="research",
             task_id=task["task_id"],
             status="done",
             summary=f"Research: trend accepted '{trend}' (from pulse kickoff {trend_task})"[:200],
-            mode="mock",
+            mode=accepted_mode,
             actor="dev1-trend",
             output={"kind": "trend_accepted", "trend": trend, "source": prior.get("source") or "backup",
                     "trend_task": trend_task},
@@ -176,31 +229,10 @@ def spot(
             "accepted": accepted,
             "message": f"accepted pulse trend {trend!r} ({trend_task}) on research task {task['task_id']}; no new trend posted",
         }
-    trend = why = None
-    mode = "mock"
-    fallback = True
-    if grok.mode == "live":
-        try:
-            result = grok.respond(
-                _prompt(query),
-                tools=[{"type": "x_search"}, {"type": "web_search"}],
-            )
-            parsed = parse_trend(result.text) if result.mode == "live" else None
-            if parsed:
-                trend, why = redact(parsed[0]), redact(parsed[1])
-                if trend and why and "[redacted]" not in trend:
-                    mode = "live"
-                    fallback = False
-                else:
-                    trend = why = None
-        except (GrokError, OSError, ValueError):
-            trend = why = None
-    if trend is None:
-        trend, why = load_backup()
-        trend, why = redact(trend), redact(why)
-        mode = "mock"
-        fallback = True
-    output = {"kind": "trend_spotted", "trend": trend, "why": why, "source": "x"}
+    found = find_trend(query, settings=settings, grok=grok)
+    trend, why, mode = found["trend"], found["why"], found["mode"]
+    fallback = mode != "live"
+    output = {"kind": "trend_spotted", "trend": trend, "why": why, "source": found["source"]}
     if fallback:
         output["fallback"] = "backup_fixture"
     if not force:
@@ -257,13 +289,195 @@ def spot(
     }
 
 
+def _merged_detail(task: dict) -> dict:
+    detail = task.get("detail") if isinstance(task.get("detail"), dict) else {}
+    meta = task.get("meta") if isinstance(task.get("meta"), dict) else {}
+    out = task.get("output") if isinstance(task.get("output"), dict) else {}
+    out_detail = out.get("detail") if isinstance(out.get("detail"), dict) else {}
+    return {**out_detail, **detail, **meta}
+
+
+def _is_non_pulse_research(task) -> bool:
+    """Queued research work from orchestrator POST /request, not a Pulse kickoff.
+
+    Pulse tasks carry meta.trend_task (merged into detail by the hub) and/or
+    expect=trend_spotted. Those stay on the one-shot accept/spot path.
+    """
+    if not isinstance(task, dict) or not task.get("task_id"):
+        return False
+    dept = str(task.get("dept") or task.get("for_dept") or "").strip().lower()
+    if dept and dept != "research":
+        return False
+    status = str(task.get("status") or "queued").strip().lower()
+    if status != "queued":
+        return False
+    info = _merged_detail(task)
+    if info.get("trend_task"):
+        return False
+    if info.get("expect") == "trend_spotted" or info.get("kind") == "pulse_kickoff":
+        return False
+    return True
+
+
+def _query_for(task: dict) -> str | None:
+    info = _merged_detail(task)
+    parts = []
+    title = task.get("title")
+    if isinstance(title, str) and title.strip():
+        parts.append(title.strip())
+    for key in ("text", "detail", "brief"):
+        value = info.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+    if not parts and isinstance(task.get("detail"), str) and task["detail"].strip():
+        parts.append(task["detail"].strip())
+    text = " ".join(parts).strip()
+    return text[:500] or None
+
+
+def _tasks_from_events(events: EventsClient) -> list:
+    """Fallback inbox: queued research events whose output.kind is task."""
+    try:
+        listed = events.get_events(dept="research", limit=200)
+    except Exception:
+        return []
+    if not isinstance(listed, dict):
+        return []
+    found = []
+    for ev in listed.get("events") or []:
+        if not isinstance(ev, dict):
+            continue
+        out = ev.get("output") or {}
+        if not isinstance(out, dict) or out.get("kind") != "task":
+            continue
+        if ev.get("dept") not in (None, "", "research"):
+            continue
+        if ev.get("status") not in (None, "", "queued"):
+            continue
+        found.append({
+            "task_id": ev.get("task_id"),
+            "dept": ev.get("dept") or "research",
+            "status": ev.get("status") or "queued",
+            "title": out.get("title") or "",
+            "parent_id": ev.get("parent_id"),
+            "detail": out.get("detail") if isinstance(out.get("detail"), dict) else {},
+        })
+    return found
+
+
+def _answered_ids(events: EventsClient) -> set:
+    try:
+        listed = events.get_events(dept="research", limit=200)
+    except Exception:
+        return set()
+    if not isinstance(listed, dict):
+        return set()
+    done = set()
+    for ev in listed.get("events") or []:
+        if not isinstance(ev, dict):
+            continue
+        out = ev.get("output") or {}
+        if isinstance(out, dict) and out.get("kind") == "research_task_done" and ev.get("parent_id"):
+            done.add(ev["parent_id"])
+    return done
+
+
+def poll_research_tasks(events: EventsClient) -> list:
+    """Queued research tasks. GET /api/tasks is the hub inbox; events are the fallback."""
+    getter = getattr(events, "get_tasks", None)
+    if getter is not None:
+        try:
+            listed = getter(dept="research", status="queued")
+            if isinstance(listed, list):
+                return [t for t in listed if isinstance(t, dict)]
+        except Exception:
+            pass
+    return _tasks_from_events(events)
+
+
+def answer_research_task(task: dict, *, settings: Settings, grok: GrokClient, events: EventsClient) -> dict:
+    found = find_trend(_query_for(task), settings=settings, grok=grok)
+    summary = f"Research: {found['trend']}. {found['why']}"[:400]
+    parent = task["task_id"]
+    task_id = "answer-" + uuid.uuid4().hex[:8]
+    output = {
+        "kind": "research_task_done",
+        "summary": summary,
+        "trend": found["trend"],
+        "why": found["why"],
+        "source": found["source"],
+    }
+    posted = events.post_event(
+        dept="research",
+        task_id=task_id,
+        status="done",
+        summary=summary,
+        mode=found["mode"],
+        actor="dev1-trend",
+        output=output,
+        parent_id=parent,
+    )
+    return {"task_id": task_id, "parent_id": parent, "mode": found["mode"], "output": output, "posted": posted}
+
+
+def serve(
+    poll_sec: float = 2,
+    *,
+    settings: Settings | None = None,
+    grok: GrokClient | None = None,
+    events: EventsClient | None = None,
+    once: bool = False,
+    stop_after: int | None = None,
+    sleep=None,
+) -> None:
+    """Poll non-pulse research tasks and post research_task_done for each new id.
+
+    Dedupes by the hub task id. A poll error or a single task error does not stop the loop.
+    """
+    settings = settings or load_settings()
+    grok = grok or GrokClient(settings)
+    events = events or EventsClient(settings)
+    sleeper = sleep or time.sleep
+    seen: set = set()
+    loops = 0
+    while True:
+        try:
+            seen.update(_answered_ids(events))
+            for task in poll_research_tasks(events):
+                tid = task.get("task_id") if isinstance(task, dict) else None
+                try:
+                    if not _is_non_pulse_research(task) or tid in seen:
+                        continue
+                    answer_research_task(task, settings=settings, grok=grok, events=events)
+                    seen.add(tid)
+                except Exception as exc:
+                    print(f"trend serve: {tid or '?'} failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        except Exception as exc:
+            print(f"trend serve: poll failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        loops += 1
+        if once or (stop_after is not None and loops >= stop_after):
+            return
+        try:
+            sleeper(poll_sec)
+        except Exception as exc:
+            print(f"trend serve: sleep failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return
+
+
 def _force_from(args: list[str]) -> bool:
     return os.environ.get("TREND_FORCE", "") == "1" or "--force" in args
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = [a for a in (sys.argv[1:] if argv is None else argv) if a != "--force"]
-    force = _force_from(list(sys.argv[1:] if argv is None else argv))
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if "--serve" in raw:
+        try:
+            serve()
+        except KeyboardInterrupt:
+            return 0
+        return 0
+    args = [a for a in raw if a != "--force"]
+    force = _force_from(raw)
     try:
         result = spot(" ".join(args), force=force) if args else spot(force=force)
     except Exception as exc:
