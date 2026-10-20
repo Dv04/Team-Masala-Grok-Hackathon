@@ -18,12 +18,12 @@ afterEach(async () => {
   }
 });
 
-async function boot() {
+async function boot(mode: "live" | "mock" = "mock") {
   const dir = await mkdtemp(join(tmpdir(), "dev2-"));
   let url = "";
   const app = createApp({
     dataDir: dir,
-    mode: "mock",
+    mode,
     getSelfUrl: () => url,
     getDepartmentsUrl: () => url,
     getDashboardUrl: () => url,
@@ -238,7 +238,7 @@ it("turns a design listing_live webhook into sales, engineering, and support fol
     dept: string;
     summary?: string;
     parent_id?: string;
-    output?: { kind?: string; price?: number; title?: string; copy?: string; product?: { title?: string; description?: string; sku?: string; price_usd?: number; image?: string } };
+    output?: { kind?: string; price?: number; title?: string; copy?: string; copy_mode?: string; product?: { title?: string; description?: string; sku?: string; price_usd?: number; image?: string } };
   }> = [];
   while (Date.now() - started < 4000) {
     events = ((await fetch(new URL("/api/events?limit=80", url)).then((response) => response.json())) as { events: typeof events }).events;
@@ -255,6 +255,7 @@ it("turns a design listing_live webhook into sales, engineering, and support fol
   expect(salesListing?.output?.product?.image).toContain("design-listing-1");
   expect(salesListing?.output?.title).toBe("Desk cactus");
   expect(salesListing?.output?.copy).toContain("Desk cactus");
+  expect(salesListing?.output?.copy_mode).toBe("mock");
   expect(salesListing?.summary).toContain("Desk cactus");
   expect(events.some((event) => event.dept === "engineering" && event.parent_id === "design-listing-1")).toBe(true);
   expect(events.some((event) => event.dept === "support" && event.parent_id === "design-listing-1")).toBe(true);
@@ -418,4 +419,145 @@ it("serves one MCP endpoint, the panel, and a 10s poll fallback", async () => {
   expect(health.modes.qa).toBe("rules_only");
   const dashboard = await fetch(new URL("/dashboard", url));
   expect(dashboard.status).toBe(200);
+});
+
+it("keeps each dept health mode on the configured mode", async () => {
+  const saved = process.env.XAI_API_KEY;
+  process.env.XAI_API_KEY = "xai-test";
+  try {
+    const url = await boot("live");
+    const posted = await post(url, "/api/events", {
+      dept: "sales",
+      task_id: "t-health",
+      actor: "sales-bot",
+      status: "done",
+      summary: "last event is mock",
+      mode: "mock",
+      output: {},
+    });
+    expect(posted.status).toBe(200);
+    const health = (await fetch(new URL("/health", url)).then((response) => response.json())) as {
+      mode: string;
+      modes: { sales: string; support: string; engineering: string };
+      depts: Array<{ mode: string }>;
+    };
+    expect(health.mode).toBe("live");
+    expect(health.modes).toMatchObject({ sales: "live", support: "live", engineering: "live" });
+    expect(health.depts.map((dept) => dept.mode)).toEqual(["live", "live", "live"]);
+  } finally {
+    if (saved === undefined) delete process.env.XAI_API_KEY;
+    else process.env.XAI_API_KEY = saved;
+  }
+});
+
+it("answers support shipping, refund, and churn with a mock template", async () => {
+  const url = await boot();
+  const tasks = [
+    { id: "sup-ship-1", title: "Where is the shipment", detail: "tracking number missing", kind: "shipping" },
+    { id: "sup-refund-1", title: "Refund the damaged mug", detail: "order arrived broken", kind: "refund" },
+    { id: "sup-churn-1", title: "Account may churn", detail: "they might cancel next month", kind: "churn" },
+  ];
+  for (const task of tasks) {
+    const response = await post(url, "/api/webhooks/inbound", {
+      dept: "support",
+      task_id: task.id,
+      actor: "auto",
+      status: "queued",
+      summary: `Task: ${task.title}`,
+      mode: "mock",
+      output: { kind: "task", title: task.title, detail: { text: task.detail, source: "hub" } },
+    });
+    expect(response.status).toBe(202);
+  }
+  const started = Date.now();
+  let events: Array<{ task_id?: string; status?: string; output?: { handler?: string; answer?: string; copy_mode?: string; title?: string } }> = [];
+  while (Date.now() - started < 8000) {
+    events = ((await fetch(new URL("/api/events?limit=80", url)).then((response) => response.json())) as { events: typeof events }).events;
+    if (tasks.every((task) => events.some((event) => event.task_id === task.id && event.status === "done"))) break;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  }
+  for (const task of tasks) {
+    const done = events.find((event) => event.task_id === task.id && event.status === "done");
+    expect(done?.output?.handler).toBe(task.kind);
+    expect(done?.output?.answer).toBe(`support done ${task.kind}: ${task.title}`);
+    expect(done?.output?.copy_mode).toBe("mock");
+    expect(done?.output?.title).toBe(task.title);
+  }
+});
+
+it("uses live Grok listing copy with the product name and price", async () => {
+  const url = await boot();
+  const saved = {
+    XAI_API_KEY: process.env.XAI_API_KEY,
+    XAI_BUDGET_USD: process.env.XAI_BUDGET_USD,
+    XAI_BUDGET_PATH: process.env.XAI_BUDGET_PATH,
+    XAI_BASE_URL: process.env.XAI_BASE_URL,
+    XAI_MAX_OUTPUT_TOKENS: process.env.XAI_MAX_OUTPUT_TOKENS,
+  };
+  const dir = await mkdtemp(join(tmpdir(), "xai-listing-"));
+  const original = globalThis.fetch;
+  const prompts: string[] = [];
+  process.env.XAI_API_KEY = "xai-test";
+  process.env.XAI_BUDGET_USD = "2";
+  process.env.XAI_BUDGET_PATH = join(dir, "budget.json");
+  process.env.XAI_BASE_URL = "https://api.x.ai/v1";
+  delete process.env.XAI_MAX_OUTPUT_TOKENS;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (target.includes("/responses")) {
+      const body = String(init?.body ?? "");
+      prompts.push(body);
+      const sales = body.includes("You are Sales");
+      return new Response(
+        JSON.stringify({
+          output_text: sales ? "Desk cactus is $6 and ready for buyers." : "Engineering noted Desk cactus at $6.",
+          usage: { input_tokens: 30, output_tokens: 12 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return original(input, init);
+  }) as typeof fetch;
+  try {
+    const listed = await post(url, "/api/webhooks/inbound", {
+      dept: "design",
+      task_id: "design-listing-live",
+      actor: "auto",
+      status: "done",
+      summary: "Listing live",
+      mode: "mock",
+      output: {
+        kind: "listing_live",
+        url: "/files/published/design-listing-live/index.html",
+        product: { title: "Desk cactus", price_usd: 6, product_type: "sticker", tagline: "A sticker" },
+      },
+    });
+    expect(listed.status).toBe(202);
+    const started = Date.now();
+    let sales: { output?: { copy?: string; copy_mode?: string } } | undefined;
+    let engineering: { output?: { copy?: string; copy_mode?: string } } | undefined;
+    while (Date.now() - started < 4000) {
+      const events = ((await fetch(new URL("/api/events?limit=40", url)).then((response) => response.json())) as {
+        events: Array<{ dept: string; parent_id?: string; output?: { kind?: string; copy?: string; copy_mode?: string } }>;
+      }).events;
+      sales = events.find((event) => event.dept === "sales" && event.parent_id === "design-listing-live" && event.output?.kind === "listing_live");
+      engineering = events.find((event) => event.dept === "engineering" && event.parent_id === "design-listing-live");
+      if (sales && engineering) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(sales?.output?.copy).toBe("Desk cactus is $6 and ready for buyers.");
+    expect(sales?.output?.copy_mode).toBe("live");
+    expect(engineering?.output?.copy).toContain("Desk cactus");
+    expect(engineering?.output?.copy_mode).toBe("live");
+    expect(prompts.some((body) => body.includes("Desk cactus") && body.includes("$6") && body.includes("Sales"))).toBe(true);
+    expect(prompts.some((body) => body.includes("Desk cactus") && body.includes("$6") && body.includes("Engineering"))).toBe(true);
+    expect(prompts.some((body) => body.includes('"max_output_tokens":200'))).toBe(true);
+  } finally {
+    globalThis.fetch = original;
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
 });

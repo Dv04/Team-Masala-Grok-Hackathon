@@ -22,6 +22,7 @@ import type { DepartmentEvent, OpsTask } from "./contract/types.js";
 import { ContractError, DepartmentsEngine } from "./departments/engine.js";
 import { planIssue } from "./engineering/bot.js";
 import { HttpError, postHub, readJson, requestJson, sendJson, sendText } from "./http.js";
+import { grokText } from "./grok.js";
 import { listingFromUpstream } from "./listing.js";
 import { newId } from "./ids.js";
 import { classifyInbound, InboundHub } from "./inbound/hub.js";
@@ -126,7 +127,7 @@ export function createApp(options: AppOptions): App {
       dept,
       ok: true,
       connected: true,
-      mode: "mock" as const,
+      mode,
       service: "dev2",
       latest_status: latest?.status ?? "idle",
       latest_summary: latest?.summary ?? "Nothing yet",
@@ -623,18 +624,36 @@ export function createApp(options: AppOptions): App {
   }
 
   async function postTaskStatus(task: OpsTask, requestId: string | undefined): Promise<void> {
+    const title = (task.summary || "task").slice(0, 160);
+    const kind = task.kind || "task";
+    const template = `${task.dept} done ${kind}: ${title}`;
+    let answer = template;
+    let copyMode: "live" | "mock" = "mock";
+    try {
+      const drafted = await grokText(`${deptPrompt(task.dept)} Title: ${title}. Detail: ${payloadDetail(task)}`, {
+        timeoutMs: 3500,
+      });
+      if (drafted.mode === "live" && drafted.text.trim()) {
+        answer = drafted.text.trim();
+        copyMode = "live";
+      }
+    } catch (error) {
+      console.warn(`xAI 0: ${error instanceof Error ? error.message : "xAI request failed"}`);
+    }
     try {
       await ctx.clientFor(task.dept).log({
         task_id: task.task_id,
         parent_id: task.task_id,
         status: "done",
-        summary: `${task.dept} done: ${task.summary}`.slice(0, 200),
+        summary: template.slice(0, 200),
         output: {
           kind: "task_done",
           source: task.source === "orchestrator" ? "orchestrator" : "hub",
           for_dept: task.dept,
-          handler: task.kind,
-          title: task.summary.slice(0, 160),
+          handler: kind,
+          title,
+          answer,
+          copy_mode: copyMode,
           ...(requestId ? { request_id: requestId } : {}),
         },
       });
@@ -681,14 +700,18 @@ export function createApp(options: AppOptions): App {
     seenListings.add(event.task_id);
     const listing = listingFromUpstream({ taskId: event.task_id, output: event.output, summary: event.summary });
     const page = listing.product.url;
+    const [engineeringDraft, salesDraft] = await Promise.all([
+      grokText(listingPrompt("Engineering", listing.product), { timeoutMs: 4000 }),
+      grokText(listingPrompt("Sales", listing.product), { timeoutMs: 4000 }),
+    ]);
+    const engineeringCopy = withListingCopy(engineeringDraft, listing.product);
+    const salesCopy = withListingCopy(salesDraft, listing.product);
     const shared = {
       kind: "listing_live",
       url: page,
       price: listing.product.price_usd,
       listing_task: event.task_id,
       title: listing.product.title,
-      copy: listing.copy,
-      copy_mode: "mock" as const,
       product: listing.product,
     };
     await ctx.clientFor("engineering").log({
@@ -696,14 +719,14 @@ export function createApp(options: AppOptions): App {
       parent_id: event.task_id,
       status: "done",
       summary: `${listing.product.title} recorded by engineering`,
-      output: shared,
+      output: { ...shared, copy: engineeringCopy.text, copy_mode: engineeringCopy.mode },
     });
     await ctx.clientFor("sales").log({
       task_id: newId("salelist"),
       parent_id: event.task_id,
       status: "done",
       summary: `${listing.product.title} listing is live`,
-      output: shared,
+      output: { ...shared, copy: salesCopy.text, copy_mode: salesCopy.mode },
     });
     await draftReply(ctx, {
       parentId: event.task_id,
@@ -800,6 +823,9 @@ export function createApp(options: AppOptions): App {
         return planIssue(ctx, { parentId, timeoutMs });
       case "design_request":
         return draftReply(ctx, { message_id: "msg_design", parentId, timeoutMs });
+      case "shipping":
+      case "refund":
+        return { kind: task.kind };
       default:
         throw new HttpError(400, `Unknown inbound kind ${task.kind}`);
     }
@@ -826,8 +852,13 @@ export function createApp(options: AppOptions): App {
 const HANDLER_KINDS = new Set(["bug", "lead_question", "churn", "shipped", "hire_needed", "design_request"]);
 
 export function deriveTaskKind(dept: Dept, title: string, detailKind?: string): string {
-  if (detailKind && HANDLER_KINDS.has(detailKind)) return detailKind;
+  if (detailKind && (HANDLER_KINDS.has(detailKind) || detailKind === "shipping" || detailKind === "refund")) return detailKind;
   const text = title.toLowerCase();
+  if (dept === "support") {
+    if (/\b(refund|refunds|chargeback)\b/.test(text)) return "refund";
+    if (/\b(ship|ships|shipping|shipment|delivery|deliver|tracking)\b/.test(text)) return "shipping";
+    if (/\b(churn|cancel|cancellation)\b/.test(text)) return "churn";
+  }
   if (/\b(bug|fix|broken|timeout|implement)\b/.test(text)) return "bug";
   if (/\b(lead|prospect|pipeline|sales note)\b/.test(text)) return "lead_question";
   if (/\b(churn|cancel|refund)\b/.test(text)) return "churn";
@@ -852,12 +883,13 @@ function eventAsTask(event: DepartmentEvent, target: Dept): OpsTask {
     (typeof extra.detail === "string" && extra.detail) ||
     event.summary;
   const detailKind = typeof detail.kind === "string" ? detail.kind : undefined;
+  const detailText = typeof detail.text === "string" ? detail.text : typeof extra.detail === "string" ? extra.detail : "";
   return {
     id: event.task_id,
     dept: target,
     task_id: event.task_id,
     source: detail.source === "orchestrator" ? "orchestrator" : "inbound",
-    kind: deriveTaskKind(target, title, detailKind),
+    kind: deriveTaskKind(target, `${title} ${detailText}`, detailKind),
     summary: title,
     status: "queued",
     ...(event.parent_id ? { parent_id: event.parent_id } : {}),
@@ -873,12 +905,13 @@ function normalizeHubTask(raw: OpsTask, fallbackDept: Dept): OpsTask | undefined
   if (!raw.task_id || !isDept(dept)) return undefined;
   const title = extra.title || (typeof detail.text === "string" ? detail.text : raw.summary || "");
   const detailKind = typeof detail.kind === "string" ? detail.kind : raw.kind;
+  const detailText = typeof detail.text === "string" ? detail.text : "";
   return {
     id: raw.id || raw.task_id,
     dept,
     task_id: raw.task_id,
     source: detail.source === "orchestrator" || raw.source === "orchestrator" ? "orchestrator" : raw.source || "inbound",
-    kind: deriveTaskKind(dept, `${title} ${raw.summary ?? ""}`, detailKind),
+    kind: deriveTaskKind(dept, `${title} ${raw.summary ?? ""} ${detailText}`, detailKind),
     summary: title || raw.summary || "hub task",
     status: raw.status ?? "queued",
     ...(raw.payload ? { payload: raw.payload } : Object.keys(detail).length ? { payload: detail } : {}),
@@ -939,6 +972,30 @@ function rules() {
 
 function numberArg(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function deptPrompt(dept: Dept): string {
+  if (dept === "sales") return "You are Sales. Answer in one or two plain sentences. No email or phone.";
+  if (dept === "support") return "You are Support. Answer in one or two plain sentences. No email or phone.";
+  return "You are Engineering. Answer in one or two plain sentences. No email or phone.";
+}
+
+function payloadDetail(task: OpsTask): string {
+  const text = task.payload?.text ?? task.payload?.detail;
+  return typeof text === "string" ? text.slice(0, 800) : "";
+}
+
+function listingPrompt(role: string, product: { title: string; price_usd: number }): string {
+  return `You are ${role}. Write one short listing sentence for ${product.title} priced at $${product.price_usd}. Include the product name and price. No email or phone.`;
+}
+
+function withListingCopy(
+  draft: { text: string; mode: "live" | "mock" },
+  product: { title: string; price_usd: number },
+): { text: string; mode: "live" | "mock" } {
+  const body = draft.text.trim();
+  const named = body.toLowerCase().includes(product.title.toLowerCase()) ? body : `${product.title} ($${product.price_usd}): ${body}`;
+  return { text: named, mode: draft.mode };
 }
 
 export async function listen(server: Server, port = 0): Promise<string> {
