@@ -126,7 +126,19 @@ export async function chainLaunch(ctx: ServiceCtx, input: { parentId?: string; t
     parent_id: pageId,
     status: "done",
     summary: "Pulse Studio listing is live",
-    output: { kind: "listing_live", product: "Pulse Studio", url: "/pulse", price: 49 },
+    output: {
+      kind: "listing_live",
+      url: "/pulse",
+      price: 49,
+      product: {
+        product_type: "poster",
+        title: "Pulse Studio",
+        tagline: "A one-page product site",
+        price_usd: 49,
+        cost_usd: 12,
+        trend: "shared inbox",
+      },
+    },
   });
   const buyer = await draftReply(ctx, {
     parentId: listingId,

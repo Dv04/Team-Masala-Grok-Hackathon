@@ -207,6 +207,37 @@ it("launches Pulse Studio from a product through a live listing", async () => {
   expect(html).toContain("MOCK");
 });
 
+it("turns a design listing_live webhook into sales, engineering, and support follow-ups", async () => {
+  const url = await boot();
+  const listed = await post(url, "/api/webhooks/inbound", {
+    dept: "design",
+    task_id: "design-listing-1",
+    actor: "auto",
+    status: "done",
+    summary: "Listing live",
+    mode: "mock",
+    output: {
+      kind: "listing_live",
+      url: "/files/published/design-listing-1/index.html",
+      product: { title: "Desk cactus", price_usd: 6, product_type: "sticker", tagline: "A sticker", cost_usd: 1.6, trend: "plants" },
+    },
+  });
+  expect(listed.status).toBe(202);
+  const started = Date.now();
+  let events: Array<{ dept: string; parent_id?: string; output?: { kind?: string; price?: number } }> = [];
+  while (Date.now() - started < 4000) {
+    events = ((await fetch(new URL("/api/events?limit=80", url)).then((response) => response.json())) as { events: typeof events }).events;
+    const support = events.some((event) => event.dept === "support" && event.parent_id === "design-listing-1");
+    const sales = events.some((event) => event.dept === "sales" && event.output?.kind === "listing_live" && event.parent_id === "design-listing-1");
+    if (support && sales) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  expect(events.some((event) => event.dept === "sales" && event.output?.kind === "listing_live" && event.output.price === 6)).toBe(true);
+  expect(events.some((event) => event.dept === "engineering" && event.parent_id === "design-listing-1")).toBe(true);
+  expect(events.some((event) => event.dept === "support" && event.parent_id === "design-listing-1")).toBe(true);
+  expect(JSON.stringify(events)).not.toContain("@");
+});
+
 it("serves one MCP endpoint, the panel, and a 10s poll fallback", async () => {
   expect(POLL_FALLBACK_MS).toBeGreaterThanOrEqual(10_000);
   const url = await boot();

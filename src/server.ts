@@ -21,6 +21,7 @@ import type { DepartmentEvent, OpsTask } from "./contract/types.js";
 import { ContractError, DepartmentsEngine } from "./departments/engine.js";
 import { planIssue } from "./engineering/bot.js";
 import { HttpError, readJson, sendJson, sendText } from "./http.js";
+import { newId } from "./ids.js";
 import { asInboundEvent, InboundHub } from "./inbound/hub.js";
 import { handleMcp, type McpTool } from "./mcp.js";
 import { panelHtml } from "./panel/page.js";
@@ -50,6 +51,7 @@ export function createApp(options: AppOptions): App {
   const engine = new DepartmentsEngine();
   const hub = new InboundHub();
   const startedTasks = new Set<string>();
+  const seenListings = new Set<string>();
   const subscribers = new Set<(chunk: string) => void>();
   const stuckAfterMs = options.stuckAfterMs ?? Number(process.env.OPS_STUCK_AFTER_MS ?? 60_000);
   const mode = options.mode ?? resolveEventMode();
@@ -504,6 +506,7 @@ export function createApp(options: AppOptions): App {
       const event = asInboundEvent(await readJson(req));
       hub.push(event);
       sendJson(res, 202, { ok: true, dept: event.dept });
+      void noteListing(event);
       return;
     }
     if (url.pathname === WEBHOOK_PATH && method === "GET") {
@@ -556,6 +559,42 @@ export function createApp(options: AppOptions): App {
       }
     }
     sendJson(res, 404, { error: "Not found" });
+  }
+
+  async function noteListing(event: DepartmentEvent): Promise<void> {
+    if (event.output?.kind !== "listing_live" || event.dept !== "design") return;
+    if (seenListings.has(event.task_id)) return;
+    seenListings.add(event.task_id);
+    const product = event.output.product;
+    const price =
+      product && typeof product === "object" && "price_usd" in product
+        ? (product as { price_usd?: unknown }).price_usd
+        : (event.output.price ?? null);
+    const page = typeof event.output.url === "string" ? event.output.url : "";
+    const shared = { kind: "listing_live", url: page, price, listing_task: event.task_id };
+    await ctx.clientFor("engineering").log({
+      task_id: newId("englist"),
+      parent_id: event.task_id,
+      status: "done",
+      summary: "Engineering recorded the live listing",
+      output: shared,
+    });
+    await ctx.clientFor("sales").log({
+      task_id: newId("salelist"),
+      parent_id: event.task_id,
+      status: "done",
+      summary: "Sales recorded the live listing",
+      output: shared,
+    });
+    await draftReply(ctx, {
+      parentId: event.task_id,
+      message: {
+        id: "msg_listing_buyer",
+        from_name: "Buyer",
+        body: "When will this listing ship?",
+        channel: "email",
+      },
+    });
   }
 
   async function remoteTasks(dept?: string): Promise<OpsTask[]> {

@@ -32,7 +32,8 @@ export function asInboundEvent(raw: unknown): DepartmentEvent {
   const body = raw as Record<string, unknown>;
   const source = body.event && typeof body.event === "object" ? (body.event as Record<string, unknown>) : body;
   const forDept = source.output && typeof source.output === "object" ? (source.output as { for_dept?: unknown }).for_dept : undefined;
-  const deptOk = isDept(source.dept) || (source.dept === "qa" && isDept(forDept));
+  const kind = source.output && typeof source.output === "object" ? (source.output as { kind?: unknown }).kind : undefined;
+  const deptOk = isDept(source.dept) || (source.dept === "qa" && isDept(forDept)) || (source.dept === "design" && kind === "listing_live");
   if (!deptOk) throw new Error("Webhook dept must be sales, support, or engineering");
   if (typeof source.task_id !== "string" || typeof source.actor !== "string" || typeof source.status !== "string") {
     throw new Error("Webhook payload is missing task_id, actor, or status");

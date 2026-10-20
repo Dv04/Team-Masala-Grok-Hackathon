@@ -63,7 +63,9 @@ await call("/api/chains/lead", { timeoutMs: 15000 });
 await call("/api/chains/signals");
 await call("/api/chains/launch");
 
-const log = (await fetch(new URL("/api/events?limit=12", url)).then((response) => response.json())) as {
+const eventsUrl = new URL("/api/events", remote || url);
+eventsUrl.searchParams.set("limit", "12");
+const log = (await fetch(eventsUrl).then((response) => response.json())) as {
   events: Array<{ dept: string; status: string; summary: string }>;
 };
 console.log("--- latest events ---");

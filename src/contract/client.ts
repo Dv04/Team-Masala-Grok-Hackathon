@@ -1,4 +1,5 @@
 import { actorFor, type Dept } from "../config.js";
+import { redactOutput, redactValue } from "./redact.js";
 import { POLL_FALLBACK_MS, queueMirror, requestJson } from "../http.js";
 import type { InboundHub } from "../inbound/hub.js";
 import type { DepartmentEvent, OpsTask, QaResponse } from "./types.js";
@@ -36,8 +37,8 @@ export class DepartmentClient {
       task_id: partial.task_id,
       ...(partial.parent_id ? { parent_id: partial.parent_id } : {}),
       status: partial.status,
-      summary: partial.summary,
-      ...(partial.output ? { output: partial.output } : {}),
+      summary: String(redactValue(partial.summary) ?? partial.summary),
+      ...(partial.output ? { output: redactOutput(partial.output) } : {}),
       needs_approval: partial.needs_approval === true || partial.status === "needs_approval",
     };
     const response = await requestJson(new URL("/api/events", this.options.baseUrl), {
@@ -121,6 +122,7 @@ export class DepartmentClient {
   private async waitFor(match: (event: DepartmentEvent) => boolean, timeoutMs: number, skip = 0): Promise<DepartmentEvent> {
     const started = Date.now();
     let nextPoll = 0;
+    let pollGap = 300;
     for (;;) {
       const hits = this.matching(this.options.hub?.events ?? [], match);
       if (hits.length > skip) return hits[hits.length - 1] as DepartmentEvent;
@@ -129,7 +131,8 @@ export class DepartmentClient {
         const events = await this.listEvents({ dept: "" });
         const found = this.matching(events, match);
         if (found.length > skip) return found[found.length - 1] as DepartmentEvent;
-        nextPoll = now + POLL_FALLBACK_MS;
+        nextPoll = now + pollGap;
+        pollGap = POLL_FALLBACK_MS;
       }
       if (Date.now() - started > timeoutMs) throw new Error("Timed out waiting for a department event");
       const pause = this.options.hub ? 40 : Math.max(0, Math.min(POLL_FALLBACK_MS, nextPoll - Date.now()));
