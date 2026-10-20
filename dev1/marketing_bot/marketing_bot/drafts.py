@@ -146,20 +146,9 @@ def grok_drafts(grok, listing, trend=None):
 
 
 def public_content(drafts):
-    """Single string the QA gate reads. Price symbols and contact info are already stripped."""
-    landing = drafts.get("landing") or {}
-    bullets = "\n".join(f"- {b}" for b in landing.get("bullets") or [])
-    parts = [
-        drafts.get("x_post") or "",
-        "\n".join(drafts.get("x_thread") or []),
-        drafts.get("linkedin") or "",
-        drafts.get("blog") or "",
-        landing.get("headline") or "",
-        landing.get("subhead") or "",
-        bullets,
-        landing.get("cta") or "",
-    ]
-    return _clean("\n\n".join(x for x in parts if x))
+    """Primary X post only. Joining every channel made QA flag the copy as repetitive or mixed.
+    LinkedIn, blog, thread, and landing stay on output.drafts."""
+    return _clean((drafts or {}).get("x_post") or "")
 
 
 def revise_mock(drafts, reasons):

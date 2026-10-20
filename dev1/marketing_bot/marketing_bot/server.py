@@ -16,6 +16,13 @@ from .bot import MarketingBot
 log = logging.getLogger("marketing")
 
 
+def _process_event(bot, ev):
+    try:
+        bot.handle_event(ev)
+    except Exception:
+        log.exception("webhook handler failed")
+
+
 class _Handler(BaseHTTPRequestHandler):
     bot = None
 
@@ -38,13 +45,11 @@ class _Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send(400, {"ok": False, "error": "body must be JSON"})
             return
-        try:
-            result = self.bot.handle_event(ev)
-        except Exception as e:
-            log.exception("webhook handler failed")
-            self._send(500, {"ok": False, "error": type(e).__name__})
-            return
-        self._send(200, {"ok": True, "handled": bool(result), "task_id": (result or {}).get("task_id")})
+        # Ack before draft/QA work. A synchronous handler held the socket ~23s and the hub hit BrokenPipe.
+        self._send(202, {"ok": True, "accepted": True})
+        threading.Thread(
+            target=_process_event, args=(self.bot, ev), name="marketing-pulse", daemon=True,
+        ).start()
 
     def _send(self, code, body):
         data = json.dumps(body).encode()
