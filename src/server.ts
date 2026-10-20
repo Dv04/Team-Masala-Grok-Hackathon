@@ -20,6 +20,7 @@ import { DepartmentClient, followEventStream } from "./contract/client.js";
 import type { DepartmentEvent, OpsTask } from "./contract/types.js";
 import { ContractError, DepartmentsEngine } from "./departments/engine.js";
 import { planIssue } from "./engineering/bot.js";
+import { configuredCopyMode, grokText } from "./grok.js";
 import { HttpError, readJson, sendJson, sendText } from "./http.js";
 import { newId } from "./ids.js";
 import { asInboundEvent, InboundHub } from "./inbound/hub.js";
@@ -52,6 +53,7 @@ export function createApp(options: AppOptions): App {
   const hub = new InboundHub();
   const startedTasks = new Set<string>();
   const seenListings = new Set<string>();
+  const answeredTasks = new Set<string>();
   const subscribers = new Set<(chunk: string) => void>();
   const stuckAfterMs = options.stuckAfterMs ?? Number(process.env.OPS_STUCK_AFTER_MS ?? 60_000);
   const mode = options.mode ?? resolveEventMode();
@@ -123,7 +125,7 @@ export function createApp(options: AppOptions): App {
       dept,
       ok: true,
       connected: true,
-      mode: "mock" as const,
+      mode: configuredCopyMode(),
       service: "dev2",
       latest_status: latest?.status ?? "idle",
       latest_summary: latest?.summary ?? "Nothing yet",
@@ -242,11 +244,12 @@ export function createApp(options: AppOptions): App {
     const method = req.method ?? "GET";
 
     if (method === "GET" && (url.pathname === "/health" || url.pathname === "/api/health")) {
+      const copyMode = configuredCopyMode();
       sendJson(res, 200, {
         ok: true,
         service: "dev2",
-        mode,
-        modes: { qa: "rules_only", sales: mode, support: mode, engineering: mode },
+        mode: copyMode,
+        modes: { qa: "rules_only", sales: copyMode, support: copyMode, engineering: copyMode },
         webhook_path: WEBHOOK_PATH,
         panel: "/panel",
         depts: DEPTS.map((dept) => statusFor(dept)),
@@ -270,7 +273,7 @@ export function createApp(options: AppOptions): App {
       return;
     }
     if (method === "GET" && url.pathname === "/panel") {
-      sendText(res, 200, panelHtml({ mode, dashboardUrl: options.getDashboardUrl() }), "text/html; charset=utf-8", {
+      sendText(res, 200, panelHtml({ mode: configuredCopyMode(), dashboardUrl: options.getDashboardUrl() }), "text/html; charset=utf-8", {
         "content-security-policy": "frame-ancestors *",
       });
       return;
@@ -396,17 +399,20 @@ export function createApp(options: AppOptions): App {
     }
     if (method === "POST" && url.pathname === "/api/tasks") {
       const body = (await readJson(req)) as InboundBody;
-      const dept = body.dept ?? url.searchParams.get("dept");
+      const dept = body.dept ?? body.for_dept ?? url.searchParams.get("dept");
       if (!isDept(dept)) throw new HttpError(400, "dept must be sales, support, or engineering");
       const created = engine.enqueueInbound({
         dept,
-        summary: body.summary?.trim() || "Inbound task",
+        summary: body.summary?.trim() || body.title?.trim() || "Inbound task",
         ...(taskKind(body) ? { kind: taskKind(body) } : {}),
         ...(body.payload ? { payload: body.payload } : {}),
         ...(body.parent_id ? { parent_id: body.parent_id } : {}),
         ...(body.task_id ? { task_id: body.task_id } : {}),
       });
       if (!created.duplicate) await fanout(created.event);
+      if (!created.duplicate && isAnswerableTask(body)) {
+        void answerDeptTask(dept, created.task.task_id, taskTitle(body), detailText(body.detail), body.parent_id);
+      }
       sendJson(res, 201, { task: created.task, duplicate: created.duplicate });
       return;
     }
@@ -430,6 +436,9 @@ export function createApp(options: AppOptions): App {
         ...(body.task_id ? { task_id: body.task_id } : {}),
       });
       if (!created.duplicate) await fanout(created.event);
+      if (!created.duplicate && isAnswerableTask(body)) {
+        void answerDeptTask(dept, created.task.task_id, taskTitle(body), detailText(body.detail), body.parent_id);
+      }
       const results = await consume(dept);
       sendJson(res, 200, { task: created.task, results });
       return;
@@ -507,6 +516,7 @@ export function createApp(options: AppOptions): App {
       hub.push(event);
       sendJson(res, 202, { ok: true, dept: event.dept });
       void noteListing(event);
+      void noteHubTask(event);
       return;
     }
     if (url.pathname === WEBHOOK_PATH && method === "GET") {
@@ -561,6 +571,48 @@ export function createApp(options: AppOptions): App {
     sendJson(res, 404, { error: "Not found" });
   }
 
+  async function noteHubTask(event: DepartmentEvent): Promise<void> {
+    if (!isDept(event.dept) || event.status !== "queued" || event.output?.kind !== "task") return;
+    const title = typeof event.output.title === "string" && event.output.title.trim() ? event.output.title.trim() : event.summary;
+    const parent = typeof event.parent_id === "string" ? event.parent_id : undefined;
+    await answerDeptTask(event.dept, event.task_id, title, detailText(event.output.detail), parent);
+  }
+
+  async function answerDeptTask(dept: Dept, taskId: string, title: string, detail: string, parentId?: string): Promise<void> {
+    if (answeredTasks.has(taskId)) return;
+    answeredTasks.add(taskId);
+    const kind = detectKind(dept, title, detail);
+    const template = `${dept} done ${kind}: ${title}`.slice(0, 200);
+    const prompt = `Task title: ${title}\nDetail: ${detail || "(none)"}`;
+    let answer = template;
+    let copyMode: "live" | "mock" = "mock";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        grokText(prompt, { system: DEPT_SYSTEM[dept], timeoutMs: TASK_TIMEOUT_MS + 500, maxOutputTokens: 200 }),
+        new Promise<{ timedOut: true }>((resolve) => {
+          timer = setTimeout(() => resolve({ timedOut: true }), TASK_TIMEOUT_MS);
+        }),
+      ]);
+      if (!("timedOut" in result)) {
+        answer = result.text;
+        copyMode = result.mode;
+      }
+    } catch {
+      answer = template;
+      copyMode = "mock";
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    await ctx.clientFor(dept).log({
+      task_id: taskId,
+      ...(parentId ? { parent_id: parentId } : {}),
+      status: "done",
+      summary: template,
+      output: { kind, answer, copy_mode: copyMode, title },
+    });
+  }
+
   async function noteListing(event: DepartmentEvent): Promise<void> {
     if (event.output?.kind !== "listing_live" || event.dept !== "design") return;
     if (seenListings.has(event.task_id)) return;
@@ -571,20 +623,40 @@ export function createApp(options: AppOptions): App {
         ? (product as { price_usd?: unknown }).price_usd
         : (event.output.price ?? null);
     const page = typeof event.output.url === "string" ? event.output.url : "";
-    const shared = { kind: "listing_live", url: page, price, listing_task: event.task_id };
+    const name = productName(product);
+    const priceLabel = price === null || price === undefined || price === "" ? "an unlisted price" : `$${price}`;
+    const shared = { kind: "listing_live", url: page, price, listing_task: event.task_id, product_name: name };
+    const [engineeringCopy, salesCopy] = await Promise.all([
+      grokText(
+        `Write an engineering note that the listing for ${name} is live. The price is ${priceLabel}. Include the product name and the price.`,
+        {
+          system: "You write two short sentences for the engineering log of a live product listing. No secrets.",
+          maxOutputTokens: 200,
+          timeoutMs: 4000,
+        },
+      ),
+      grokText(
+        `Write sales listing copy for ${name}. The price is ${priceLabel}. Include the product name and the price.`,
+        {
+          system: "You write two short sentences of sales copy for a live product listing. No email, no phone, no discounts.",
+          maxOutputTokens: 200,
+          timeoutMs: 4000,
+        },
+      ),
+    ]);
     await ctx.clientFor("engineering").log({
       task_id: newId("englist"),
       parent_id: event.task_id,
       status: "done",
-      summary: "Engineering recorded the live listing",
-      output: shared,
+      summary: `Engineering recorded the live listing for ${name}`,
+      output: { ...shared, copy: engineeringCopy.text, copy_mode: engineeringCopy.mode },
     });
     await ctx.clientFor("sales").log({
       task_id: newId("salelist"),
       parent_id: event.task_id,
       status: "done",
-      summary: "Sales recorded the live listing",
-      output: shared,
+      summary: `Sales recorded the live listing for ${name}`,
+      output: { ...shared, copy: salesCopy.text, copy_mode: salesCopy.mode },
     });
     await draftReply(ctx, {
       parentId: event.task_id,
@@ -670,7 +742,11 @@ export function createApp(options: AppOptions): App {
 
 interface InboundBody {
   dept?: string;
+  for_dept?: string;
   summary?: string;
+  title?: string;
+  detail?: unknown;
+  source?: string;
   kind?: string;
   type?: string;
   payload?: Record<string, unknown>;
@@ -678,6 +754,63 @@ interface InboundBody {
   task_id?: string;
   timeoutMs?: number;
   icp?: string;
+}
+
+const CHAIN_KINDS = new Set(["bug", "lead_question", "churn", "shipped", "hire_needed", "design_request"]);
+
+const DEFAULT_KIND: Record<Dept, string> = {
+  sales: "lead",
+  support: "customer question",
+  engineering: "issue",
+};
+
+const DEPT_SYSTEM: Record<Dept, string> = {
+  sales: "You are the sales department. Answer in one or two plain sentences. No email addresses, phone numbers, or discounts.",
+  support: "You are support. Answer the customer in one or two plain sentences. No email addresses or phone numbers.",
+  engineering: "You are engineering. Reply in one or two plain sentences about the task. No secrets and no credentials.",
+};
+
+const TASK_TIMEOUT_MS = 3500;
+
+function isAnswerableTask(body: InboundBody): boolean {
+  const kind = taskKind(body);
+  if (kind && CHAIN_KINDS.has(kind)) return false;
+  return body.source === "orchestrator" || body.source === "hub" || Boolean(body.title?.trim());
+}
+
+function taskTitle(body: InboundBody): string {
+  return body.title?.trim() || body.summary?.trim() || "Task";
+}
+
+function detailText(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object") {
+    const record = detail as Record<string, unknown>;
+    if (typeof record.text === "string") return record.text;
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function productName(product: unknown): string {
+  if (product && typeof product === "object" && "title" in product && typeof (product as { title: unknown }).title === "string") {
+    const title = (product as { title: string }).title.trim();
+    if (title) return title;
+  }
+  return "the product";
+}
+
+function detectKind(dept: Dept, title: string, detail: string): string {
+  if (dept === "support") {
+    const text = `${title}\n${detail}`.toLowerCase();
+    if (text.includes("refund")) return "refund";
+    if (text.includes("shipping") || text.includes("where is my order")) return "shipping question";
+  }
+  return DEFAULT_KIND[dept];
 }
 
 function taskKind(body: InboundBody): string | undefined {

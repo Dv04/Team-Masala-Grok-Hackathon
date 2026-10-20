@@ -224,7 +224,7 @@ it("turns a design listing_live webhook into sales, engineering, and support fol
   });
   expect(listed.status).toBe(202);
   const started = Date.now();
-  let events: Array<{ dept: string; parent_id?: string; output?: { kind?: string; price?: number } }> = [];
+  let events: Array<{ dept: string; parent_id?: string; output?: { kind?: string; price?: number; copy_mode?: string } }> = [];
   while (Date.now() - started < 4000) {
     events = ((await fetch(new URL("/api/events?limit=80", url)).then((response) => response.json())) as { events: typeof events }).events;
     const support = events.some((event) => event.dept === "support" && event.parent_id === "design-listing-1");
@@ -232,8 +232,8 @@ it("turns a design listing_live webhook into sales, engineering, and support fol
     if (support && sales) break;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  expect(events.some((event) => event.dept === "sales" && event.output?.kind === "listing_live" && event.output.price === 6)).toBe(true);
-  expect(events.some((event) => event.dept === "engineering" && event.parent_id === "design-listing-1")).toBe(true);
+  expect(events.some((event) => event.dept === "sales" && event.output?.kind === "listing_live" && event.output.price === 6 && event.output.copy_mode === "mock")).toBe(true);
+  expect(events.some((event) => event.dept === "engineering" && event.parent_id === "design-listing-1" && event.output?.copy_mode === "mock")).toBe(true);
   expect(events.some((event) => event.dept === "support" && event.parent_id === "design-listing-1")).toBe(true);
   expect(JSON.stringify(events)).not.toContain("@");
 });
@@ -257,9 +257,17 @@ it("serves one MCP endpoint, the panel, and a 10s poll fallback", async () => {
   expect(html).toContain("Sales");
   expect(html).toContain("Support");
   expect(html).toContain("Engineering");
-  const health = (await fetch(new URL("/health", url)).then((response) => response.json())) as { ok: boolean; modes: { qa: string } };
+  const health = (await fetch(new URL("/health", url)).then((response) => response.json())) as {
+    ok: boolean;
+    mode: string;
+    modes: { qa: string; sales: string; support: string; engineering: string };
+    depts: Array<{ dept: string; mode: string }>;
+  };
   expect(health.ok).toBe(true);
   expect(health.modes.qa).toBe("rules_only");
+  expect(health.mode).toBe("mock");
+  expect(health.modes).toMatchObject({ sales: "mock", support: "mock", engineering: "mock" });
+  expect(health.depts.map((dept) => dept.mode)).toEqual(["mock", "mock", "mock"]);
   const dashboard = await fetch(new URL("/dashboard", url));
   expect(dashboard.status).toBe(200);
 });
