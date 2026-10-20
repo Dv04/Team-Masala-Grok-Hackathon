@@ -16,7 +16,7 @@ ROOT = os.environ.get("DEPT_ROOT") or os.path.dirname(os.path.dirname(os.path.ab
 TASKS = f"{ROOT}/data/tasks.jsonl"
 # Known dept ids (dev2: sales, support, engineering; dev4: hr, design, ops, qa). The other 6 belong to dev1/dev3,
 # so any lowercase slug is accepted as a dept id rather than guessing their names.
-KNOWN = ["sales", "support", "engineering", "hr", "design", "ops", "qa"]
+KNOWN = ["orchestrator", "research", "marketing", "sales", "support", "engineering", "finance", "legal", "integrations", "hr", "design", "ops", "qa"]
 SLUG = re.compile(r"^[a-z][a-z0-9_-]{1,30}$")
 ALIASES = {"data": "ops", "dataops": "ops", "data-ops": "ops", "qa-gate": "qa"}
 _lock = threading.Lock()

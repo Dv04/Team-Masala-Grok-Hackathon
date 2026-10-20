@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Masala Co. · Mission Control</title>
+<link rel="icon" href="data:,">
+<style>
+:root{--bg:#04060f;--panel:rgba(18,26,48,.55);--panel2:rgba(26,38,68,.55);--line:rgba(120,170,255,.18);--fg:#eaf2ff;--mut:#8ea3c7;--acc:#38e8ff;
+--ok:#3dffa8;--warn:#ffc04d;--bad:#ff4f7b;--vio:#c77dff;--mock:#ffc04d;--live:#3dffa8;--glow:0 0 18px rgba(56,232,255,.35)}
+*{box-sizing:border-box}
+html,body{margin:0;color:var(--fg);font:17px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg)}
+body{background:radial-gradient(1200px 700px at 15% -10%,rgba(56,232,255,.13),transparent 60%),radial-gradient(1000px 700px at 100% 0%,rgba(199,125,255,.14),transparent 60%),radial-gradient(900px 600px at 50% 120%,rgba(61,255,168,.08),transparent 60%),var(--bg);min-height:100vh}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(120,170,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(120,170,255,.05) 1px,transparent 1px);background-size:44px 44px;mask-image:radial-gradient(circle at 50% 30%,#000 30%,transparent 80%);z-index:0}
+header,.banners,#msg,main{position:relative;z-index:1}
+header{display:flex;align-items:center;gap:18px;padding:16px 26px;border-bottom:1px solid var(--line);background:rgba(6,10,24,.7);backdrop-filter:blur(14px);flex-wrap:wrap;position:sticky;top:0;z-index:5}
+h1{font-size:26px;margin:0;font-weight:800;letter-spacing:.02em;background:linear-gradient(90deg,#38e8ff,#c77dff);-webkit-background-clip:text;background-clip:text;color:transparent}
+h1 small{display:block;color:var(--mut);-webkit-text-fill-color:var(--mut);font-weight:500;font-size:14px;letter-spacing:.04em}
+.logo{width:42px;height:42px;border-radius:12px;background:conic-gradient(from 0deg,#38e8ff,#c77dff,#3dffa8,#38e8ff);box-shadow:var(--glow);animation:spin 8s linear infinite;position:relative}
+.logo:after{content:"";position:absolute;inset:5px;border-radius:9px;background:#060a18}
+@keyframes spin{to{transform:rotate(360deg)}}
+h2{font-size:15px;margin:0 0 12px;text-transform:uppercase;letter-spacing:.14em;color:var(--acc);display:flex;align-items:center;gap:10px;flex-wrap:wrap;text-shadow:0 0 12px rgba(56,232,255,.45)}
+.sp{flex:1}.conn{font-size:14px;color:var(--mut)}.conn b{color:var(--ok);text-shadow:0 0 10px var(--ok)}.conn.down b{color:var(--bad);text-shadow:0 0 10px var(--bad)}
+#demoSt{font-size:13px;color:var(--mut)}
+button{font:inherit;font-size:15px;border:1px solid var(--line);background:rgba(30,44,80,.6);color:var(--fg);padding:8px 16px;border-radius:10px;cursor:pointer;transition:.18s}
+button:hover{border-color:var(--acc);box-shadow:var(--glow)}
+button.pri{background:linear-gradient(135deg,#0ea5e9,#7c3aed);border-color:transparent;font-weight:700;box-shadow:0 0 22px rgba(124,58,237,.45)}
+button.ok{background:linear-gradient(135deg,#059669,#10b981);border-color:transparent;font-weight:800;box-shadow:0 0 18px rgba(61,255,168,.35)}
+button.bad{background:linear-gradient(135deg,#be123c,#f43f5e);border-color:transparent;font-weight:800;box-shadow:0 0 18px rgba(255,79,123,.35)}
+button:disabled{opacity:.45;cursor:default;box-shadow:none}
+.toggle{display:flex;align-items:center;gap:10px;padding:7px 14px;border:1px solid var(--line);border-radius:999px;cursor:pointer;user-select:none;background:rgba(20,30,60,.5)}
+.toggle .sw{width:46px;height:24px;border-radius:12px;background:#26304a;position:relative;transition:.25s}
+.toggle .sw:after{content:"";position:absolute;width:20px;height:20px;border-radius:50%;background:#fff;top:2px;left:2px;transition:.25s}
+.toggle.on{border-color:var(--vio);box-shadow:0 0 16px rgba(199,125,255,.45)}.toggle.on .sw{background:var(--vio)}.toggle.on .sw:after{left:24px}
+.banners{display:flex;gap:10px;padding:12px 26px 0;flex-wrap:wrap}
+.banner{padding:8px 14px;border-radius:10px;font-size:15px;border:1px solid;font-weight:600;backdrop-filter:blur(8px)}
+.banner.mock{border-color:var(--mock);color:#ffd88a;background:rgba(80,55,10,.45);box-shadow:0 0 14px rgba(255,192,77,.25)}
+.banner.sbx{border-color:var(--acc);color:#aef4ff;background:rgba(8,50,70,.45)}.banner.live{border-color:var(--ok);color:#a6ffd6;background:rgba(10,60,40,.45)}
+#msg{padding:0 26px}#msg div{margin:8px 0;padding:9px 14px;border-radius:10px;background:rgba(8,50,80,.7);border:1px solid var(--acc);box-shadow:var(--glow);animation:in .35s}#msg div.err{background:rgba(80,10,30,.7);border-color:var(--bad)}
+@keyframes in{from{opacity:0;transform:translateY(-6px)}}
+main{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:20px;padding:14px 26px 34px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:20px;backdrop-filter:blur(16px);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 10px 40px rgba(0,0,0,.35)}
+#graphSec{padding:10px 12px}
+#graph{width:100%;height:auto;display:block}
+#graph .edge{stroke:rgba(120,170,255,.16);stroke-width:2;fill:none}
+#graph .edge.hot{stroke:rgba(56,232,255,.75);stroke-width:3;filter:url(#gl)}
+#graph .node circle.core{fill:rgba(14,22,44,.92);stroke:rgba(120,170,255,.35);stroke-width:2;transition:stroke .3s}
+#graph .node text{fill:var(--fg);font-size:15px;font-weight:700;text-anchor:middle;pointer-events:none}
+#graph .node text.sub{fill:var(--mut);font-size:11.5px;font-weight:600}
+#graph .node text.num{font-size:17px;font-weight:800}
+#graph .node.off{opacity:.35}#graph .node.idle{opacity:.6}
+#graph .ring{fill:none;stroke-width:3;opacity:0}
+#graph .node.s-running .ring{stroke:var(--acc);opacity:1;animation:pr 1.4s ease-in-out infinite}
+#graph .node.s-needs_approval .ring{stroke:var(--vio);opacity:1;animation:pr 1s ease-in-out infinite}
+#graph .node.s-done .ring,#graph .node.s-approved .ring{stroke:var(--ok);opacity:.8}
+#graph .node.s-failed .ring{stroke:var(--bad);opacity:1}#graph .node.s-rejected .ring{stroke:var(--warn);opacity:1}#graph .node.s-queued .ring{stroke:var(--mut);opacity:.7}
+#graph .node.stalled .ring{stroke:var(--bad);opacity:1;animation:pr .6s ease-in-out infinite}#graph .node.stalled circle.core{stroke:var(--bad);fill:rgba(70,10,25,.92)}
+.chip.stalled{color:#fff;background:rgba(255,79,123,.35);border:1px solid var(--bad);font-weight:800}
+#graph .node.flash circle.core{stroke:#fff}
+#graph .node.hub circle.core{fill:rgba(40,16,70,.92);stroke:var(--vio)}
+#graph .node.pub circle.core{fill:rgba(8,50,40,.92);stroke:var(--ok)}
+@keyframes pr{50%{stroke-width:7;opacity:.45}}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--mut);padding:2px 6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
+#flowLog{font-size:13px;color:var(--mut);padding:2px 6px;min-height:20px}
+#flowLog b{color:var(--acc)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.tile{background:var(--panel2);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:14px;padding:11px 12px;min-height:118px;transition:.3s}
+.tile:hover{box-shadow:var(--glow)}
+.tile.idle{opacity:.6}.tile.off{opacity:.4;border-style:dashed}
+.tile .t{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;flex-wrap:wrap}.tile .t>div{min-width:0;flex:1 1 110px}.tile .n{font-weight:800;font-size:17px}
+.tile .o{font-size:13px;color:var(--mut)}.tile .s{margin-top:6px;font-size:14px}.tile .c{margin-top:6px;display:flex;gap:4px;flex-wrap:wrap}
+.badge{font-size:12px;font-weight:800;padding:2px 8px;border-radius:999px;letter-spacing:.06em;white-space:nowrap}
+.b-mock{background:rgba(255,192,77,.15);color:#ffd88a;border:1px solid rgba(255,192,77,.6);box-shadow:0 0 8px rgba(255,192,77,.25)}.b-live{background:rgba(61,255,168,.12);color:#a6ffd6;border:1px solid rgba(61,255,168,.5)}.b-none{background:rgba(255,255,255,.05);color:var(--mut);border:1px solid var(--line)}
+.chip{font-size:12px;padding:2px 8px;border-radius:7px;background:rgba(255,255,255,.06);color:var(--mut);letter-spacing:0;text-transform:none;text-shadow:none;font-weight:500}
+.st{font-weight:800}.st-queued{color:var(--mut)}.st-running{color:var(--acc)}.st-needs_approval{color:var(--vio)}.st-approved{color:var(--ok)}.st-rejected{color:var(--warn)}.st-done{color:var(--ok)}.st-failed{color:var(--bad)}
+.bl-queued{border-left-color:var(--mut)!important}.bl-running{border-left-color:var(--acc)!important}.bl-needs_approval{border-left-color:var(--vio)!important}.bl-approved,.bl-done{border-left-color:var(--ok)!important}.bl-rejected{border-left-color:var(--warn)!important}.bl-failed{border-left-color:var(--bad)!important}
+.feed{max-height:600px;overflow:auto;display:flex;flex-direction:column;gap:7px}
+.ev{display:grid;grid-template-columns:92px 120px 1fr;gap:12px;padding:9px 12px;background:var(--panel2);border-radius:12px;border-left:4px solid var(--line);cursor:pointer}
+.ev:hover{outline:1px solid var(--acc)}.ev.new{animation:fl 1.8s}@keyframes fl{from{background:rgba(56,232,255,.28);transform:translateX(-6px)}}
+.ev .ts{color:var(--mut);font-size:14px;font-variant-numeric:tabular-nums}.ev .d{font-weight:800}.ev .sum{font-size:15px}
+.ev .meta{font-size:12.5px;color:var(--mut);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap}.act{color:var(--ok)}
+.actor{padding:0 7px;border-radius:6px;background:rgba(255,255,255,.07)}.actor.auto{background:rgba(56,232,255,.14);color:#aef4ff}.actor.founder{background:rgba(199,125,255,.2);color:#e3c2ff}.actor.grok-routine{background:rgba(61,255,168,.14);color:#a6ffd6}
+.empty{color:var(--mut);padding:14px;text-align:center;font-size:15px}
+#apSec{border:1px solid rgba(199,125,255,.45);box-shadow:0 0 34px rgba(199,125,255,.22),inset 0 1px 0 rgba(255,255,255,.06)}
+#apSec h2{color:#e3c2ff;font-size:19px;text-shadow:0 0 14px rgba(199,125,255,.6)}
+#apCount{font-size:16px;font-weight:800;color:#fff;background:var(--vio);padding:2px 12px;box-shadow:0 0 14px var(--vio)}
+.ap{background:rgba(40,20,70,.45);border:1px solid rgba(199,125,255,.35);border-left:5px solid var(--vio);border-radius:14px;padding:13px;margin-bottom:12px;animation:in .4s}
+.ap .h{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:18px}.ap .sum{font-weight:700;margin:8px 0;font-size:18px}
+.pv{background:rgba(2,4,12,.6);border:1px solid var(--line);border-radius:10px;padding:9px;font-size:14px;white-space:pre-wrap;max-height:200px;overflow:auto;margin:6px 0}
+.pv img{max-width:150px;max-height:120px;margin:4px;background:#fff;border-radius:6px}
+.rs{font-size:14px;color:#ffd88a;margin:4px 0}
+.ap textarea{width:100%;background:rgba(2,4,12,.6);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px;font:inherit;font-size:14px;min-height:38px;resize:vertical}
+.ap .btns{display:flex;gap:10px;margin-top:8px}.ap .btns button{font-size:17px;padding:10px 20px}
+.kpis{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.kpi{background:var(--panel2);border-radius:12px;padding:12px;border:1px solid var(--line)}
+.kpi .v{font-size:32px;font-weight:800;font-variant-numeric:tabular-nums;color:#fff;text-shadow:0 0 14px rgba(56,232,255,.55)}.kpi .l{font-size:13px;color:var(--mut)}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:6px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mut);font-weight:700}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;background:rgba(2,4,12,.6);padding:1px 5px;border-radius:5px}
+#askQ{flex:1;background:rgba(2,4,12,.6);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font:inherit}
+#askQ:focus{outline:none;border-color:var(--acc);box-shadow:var(--glow)}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:9;padding:20px}
+#modal.show{display:flex}#modal .box{background:rgba(12,18,36,.95);border:1px solid var(--acc);box-shadow:var(--glow);border-radius:16px;max-width:920px;width:100%;max-height:88vh;overflow:auto;padding:18px}
+#modal pre{background:rgba(2,4,12,.8);padding:12px;border-radius:10px;overflow:auto;font-size:13px}
+a{color:var(--acc)}.links a{display:inline-block;margin:4px 10px 4px 0}
+::-webkit-scrollbar{width:8px}::-webkit-scrollbar-thumb{background:rgba(120,170,255,.25);border-radius:4px}
+@media (max-width:1100px){main{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"></div>
+  <h1>Masala Co. · Mission Control <small>13 AI departments · QA gate on everything · founder approves the rest</small></h1>
+  <div class="sp"></div>
+  <span id="demoSt"></span>
+  <span id="conn" class="conn">service: <b>connecting…</b></span>
+  <div id="away" class="toggle" title="POST /api/founder/away"><span class="sw"></span><span id="awayLbl">Founder present</span></div>
+  <button id="demo" class="pri" title="POST /api/demo/seed">▶ Run demo</button>
+</header>
+<div class="banners" id="banners">
+  <span class="banner mock" id="bMock">MOCK mode: no XAI_API_KEY set. HR and Design output is placeholder (not AI generated); QA runs deterministic rules only.</span>
+  <span class="banner sbx">SANDBOX: "sent" emails are files in an outbox with fictional recipients, not real inboxes. Payments: test mode only.</span>
+</div>
+<div id="msg"></div>
+<main>
+  <div>
+    <section id="graphSec"><h2>Company graph <span class="chip">pulses = real work handoffs from the event log (parent_id / task moving between depts / founder decisions / publish actions)</span></h2>
+      <svg id="graph" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet"><defs>
+        <filter id="gl" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        <radialGradient id="pg"><stop offset="0" stop-color="#fff"/><stop offset=".35" stop-color="#38e8ff"/><stop offset="1" stop-color="rgba(56,232,255,0)"/></radialGradient>
+      </defs><g id="gEdges"></g><g id="gPulses"></g><g id="gNodes"></g></svg>
+      <div class="legend"><span><i style="background:var(--acc)"></i>running</span><span><i style="background:var(--vio)"></i>needs approval</span><span><i style="background:var(--ok)"></i>done / approved</span><span><i style="background:var(--warn)"></i>rejected</span><span><i style="background:var(--bad)"></i>failed</span><span><i style="background:var(--mut)"></i>queued</span></div>
+      <div id="flowLog">Waiting for work to flow…</div>
+    </section>
+    <section><h2>Departments <span class="chip" id="deptCount"></span></h2><div class="tiles" id="tiles"></div></section>
+    <section><h2>Live event feed <span class="chip">newest first · SSE push + 2 s poll · click for details</span></h2><div class="feed" id="feed"></div></section>
+  </div>
+  <div>
+    <section id="apSec"><h2>⚡ Founder approval console <span class="chip" id="apCount">0</span></h2><div id="aps"></div></section>
+    <section><h2>KPIs <span class="chip">from /api/ops/kpis (DuckDB over the event log)</span></h2><div class="kpis" id="kpis"></div><div id="kpiTable" style="margin-top:10px"></div></section>
+    <section><h2>QA reliability <span class="chip">golden suite · promptfoo · deterministic asserts</span><span class="sp"></span><button id="relRun" style="font-size:13px;padding:5px 12px">Re-run suite</button></h2><div id="rel"><div class="empty">loading…</div></div></section>
+    <section><h2>Ask ops <span class="chip">governed metrics → SQL over the event log</span></h2>
+      <form id="askF" style="display:flex;gap:8px"><input id="askQ" placeholder="e.g. pending approvals? tasks by dept?"><button class="pri" type="submit">Ask</button></form>
+      <div id="askA" style="margin-top:8px"></div></section>
+    <section><h2>Automation rules <span class="chip">why each thing happened</span></h2><div id="rules"><div class="empty">loading…</div></div></section>
+  </div>
+</main>
+<div id="modal"><div class="box"><div style="display:flex;align-items:center"><h2 id="mTitle" style="margin:0">Event</h2><div class="sp"></div><button id="mClose">Close</button></div><div class="links" id="mLinks"></div><pre id="mBody"></pre></div></div>
+<script>
+"use strict";
+(function(){
+var API = (location.protocol === "file:") ? "http://127.0.0.1:8810" : "";
+// 13 departments. Names for 1-3 and 7-9 are not decided yet, so they are honest placeholders until a real dept posts events.
+var DEPTS = [
+  {n:1, key:"orchestrator", name:"Orchestrator / Chief of Staff", owner:"dev1", alias:["chief_of_staff"]},
+  {n:2, key:"research", name:"Research & strategy", owner:"dev1", alias:["strategy"]},
+  {n:3, key:"marketing", name:"Marketing & content", owner:"dev1", alias:["content"]},
+  {n:4, key:"sales", name:"Sales", owner:"dev2"},
+  {n:5, key:"support", name:"Support", owner:"dev2"},
+  {n:6, key:"engineering", name:"Engineering", owner:"dev2"},
+  {n:7, key:"finance", name:"Finance", owner:"dev3"},
+  {n:8, key:"legal", name:"Legal", owner:"dev3"},
+  {n:9, key:"integrations", name:"Integrations", owner:"dev3"},
+  {n:10, key:"hr", name:"HR", owner:"dev4 · open_recruiter"},
+  {n:11, key:"design", name:"Design", owner:"dev4 · Grok-MCP + brandkit"},
+  {n:12, key:"ops", name:"Data / Ops", owner:"dev4 · DuckDB MCP", alias:["data"]},
+  {n:13, key:"qa", name:"QA / approval gate", owner:"dev4 · rules + promptfoo"}
+];
+var OWN = {hr:1, design:1, ops:1, qa:1};
+var SYSTEM = {founder:1, auto:1, system:1, dashboard:1, inbound:1, scheduler:1, sched:1};
+var $ = function(id){return document.getElementById(id);};
+function esc(s){return String(s == null ? "" : s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+function fmtT(ts){try{return new Date(ts).toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"});}catch(e){return ts;}}
+function ago(ts){var s=(Date.now()-new Date(ts).getTime())/1000; if(!(s>=0)) return ""; if(s<60) return Math.round(s)+"s ago"; if(s<3600) return Math.round(s/60)+"m ago"; return Math.round(s/3600)+"h ago";}
+function msg(t, err){var d=document.createElement("div"); if(err) d.className="err"; d.textContent=t; $("msg").appendChild(d); setTimeout(function(){d.remove();}, 7000);}
+function get(p){return fetch(API+p,{cache:"no-store"}).then(function(r){ if(!r.ok){var e=new Error("HTTP "+r.status); e.status=r.status; throw e;} return r.json();});}
+function post(p, body){return fetch(API+p,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body||{})}).then(function(r){return r.text().then(function(t){var j; try{j=JSON.parse(t);}catch(e){j={raw:t};} if(!r.ok){var e2=new Error((j&&j.error)||("HTTP "+r.status)); e2.status=r.status; throw e2;} return j;});});}
+
+// file path -> served URL (/files/{published|outbox|design-out}/...)
+function fileUrl(p){
+  if(!p || typeof p !== "string") return null;
+  if(/^https?:\/\//.test(p) || p.indexOf("/files/")===0) return p;
+  var m = p.match(/(?:^|\/)(data\/published|published|data\/outbox|outbox|design-out)\/(.+)$/);
+  if(!m) return null;
+  var root = m[1].replace("data/","");
+  return API + "/files/" + root + "/" + m[2].split("/").map(encodeURIComponent).join("/");
+}
+function collectFiles(o, out, depth){
+  out = out || []; depth = depth || 0; if(depth>5 || o==null) return out;
+  if(typeof o === "string"){ var u=fileUrl(o); if(u && out.indexOf(u)<0) out.push(u); }
+  else if(Array.isArray(o)) o.forEach(function(x){collectFiles(x,out,depth+1);});
+  else if(typeof o === "object") Object.keys(o).forEach(function(k){collectFiles(o[k],out,depth+1);});
+  return out;
+}
+
+// ---------- state ----------
+var events = [], seen = {}, firstLoad = true, lastFeedSig = "", lastApSig = "", notes = {}, health = null, awayState = false, extraSlots = {};
+
+function deptSlot(d){
+  for(var i=0;i<DEPTS.length;i++){ var x=DEPTS[i]; if(x.key===d || (x.alias && x.alias.indexOf(d)>=0)) return x; }
+  return null;
+}
+function renderTiles(){
+  var by = {};
+  events.forEach(function(e){
+    var d = e.dept; if(SYSTEM[d]) return;
+    var key = d;
+    if(d==="qa" && e.output && e.output.for_dept){ /* qa verdicts count for qa */ }
+    var slot = deptSlot(d);
+    if(!slot){ // a dept we don't know yet (dev1/dev3): put it in the next free placeholder, with its real name
+      if(!extraSlots[d]){ for(var i=0;i<DEPTS.length;i++){ if(!DEPTS[i].key){ DEPTS[i].key=d; DEPTS[i].name=d.charAt(0).toUpperCase()+d.slice(1); DEPTS[i].owner="connected"; extraSlots[d]=1; break; } } }
+      slot = deptSlot(d); if(!slot) return;
+    }
+    key = slot.key;
+    var b = by[key] || (by[key] = {counts:{}, last:null, modes:{}, n:0});
+    b.counts[e.status] = (b.counts[e.status]||0)+1; b.last = e; b.modes[e.mode]=1; b.n++;
+  });
+  var html = "", connected = 0;
+  DEPTS.forEach(function(d){
+    var b = d.key ? by[d.key] : null;
+    if(b) connected++;
+    var cls = "tile", badge;
+    if(!d.key){ cls += " off"; badge = '<span class="badge b-none">NOT CONNECTED</span>'; }
+    else if(!b && OWN[d.key]){ cls += " idle"; badge = '<span class="badge b-none">NO EVENTS</span>'; }
+    else if(!b){ cls += " off"; badge = '<span class="badge b-none">NOT CONNECTED</span>'; }
+    else { cls += " bl-"+b.last.status; badge = b.modes.mock ? '<span class="badge b-mock">MOCK</span>' : (d.key==="qa" && health && health.modes && health.modes.qa==="rules_only" ? '<span class="badge b-live" title="deterministic rules are real; LLM rubric skipped (no XAI_API_KEY)">LIVE · RULES</span>' : '<span class="badge b-live">LIVE</span>');
+           if(b.modes.mock && b.modes.live) badge = '<span class="badge b-live">LIVE</span> <span class="badge b-mock">MOCK</span>'; }
+    var body;
+    if(!d.key) body = '<div class="s" style="color:var(--mut)">not connected yet</div>';
+    else if(!b) body = '<div class="s" style="color:var(--mut)">'+ (OWN[d.key] ? "idle, no events yet" : "not connected yet") +'</div>';
+    else {
+      body = '<div class="s"><span class="st st-'+esc(b.last.status)+'">'+esc(b.last.status)+'</span> · '+esc(ago(b.last.ts))+'<div style="color:var(--mut);font-size:12px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(b.last.summary)+'">'+esc(b.last.summary)+'</div></div><div class="c">';
+      Object.keys(b.counts).forEach(function(s){ body += '<span class="chip st-'+esc(s)+'">'+esc(s)+' '+b.counts[s]+'</span>'; });
+      body += '</div>';
+    }
+    html += '<div class="'+cls+'"><div class="t"><div><div class="n">'+d.n+'. '+esc(d.name)+'</div><div class="o">'+esc(d.owner)+'</div></div>'+badge+'</div>'+body+'</div>';
+  });
+  $("tiles").innerHTML = html;
+  $("deptCount").textContent = connected+" of 13 active";
+}
+
+function brandChips(o){
+  o = o || {}; var h = "";
+  (o.assets||[]).forEach(function(a){
+    if(!a || !("brand_score" in a)) return;
+    var sc = a.brand_score, mock = /MOCK/.test(a.brand_scorer||"");
+    var col = sc==null ? "var(--mut)" : (sc >= 0.7 ? "var(--ok)" : "var(--bad)");
+    h += '<span class="chip" title="'+esc((a.brand_scorer||"")+" · "+(a.brand_reasons||[]).join("; "))+'" style="color:'+col+'">'+esc(a.asset)+' brand '+(sc==null?"n/a":esc(sc))+
+         (a.attempts>1 ? ' (retry; was '+esc(a.first_score)+')' : '')+(mock?' · MOCK score':'')+'</span>';
+  });
+  if(o.kind==="design_regenerate") h += '<span class="chip" style="color:var(--warn)">↻ regenerate '+esc(o.asset)+': '+esc(o.brand_score)+' &lt; '+esc(o.threshold)+(/MOCK/.test(o.brand_scorer||"")?' · MOCK score':'')+'</span>';
+  return h;
+}
+function chainOf(e){
+  var byTask = {}; events.forEach(function(x){ if(!byTask[x.task_id]) byTask[x.task_id]=x; });
+  var chain = [], p = e.parent_id, guard = 0;
+  while(p && guard++<6){ chain.push(p); var pe = byTask[p]; p = pe ? pe.parent_id : null; if(p===e.task_id) break; }
+  return chain;
+}
+function renderFeed(){
+  var list = events.slice(-50).reverse();
+  var sig = list.length ? (list[0].ts+list[0].task_id+list.length) : "0";
+  if(sig === lastFeedSig) return; lastFeedSig = sig;
+  if(!list.length){ $("feed").innerHTML = '<div class="empty">No events yet. Press ▶ Run demo, or have any dept POST /api/events.</div>'; return; }
+  var html = "";
+  list.forEach(function(e, i){
+    var id = e.ts+"|"+e.task_id+"|"+e.status+"|"+e.dept;
+    var isNew = !firstLoad && !seen[id]; seen[id]=1;
+    var ch = chainOf(e), out = e.output || {}, act = out.action;
+    var actor = e.actor || "—";
+    html += '<div class="ev bl-'+esc(e.status)+(isNew?" new":"")+'" data-i="'+(list.length-1-i)+'">'+
+      '<div class="ts">'+esc(fmtT(e.ts))+'</div>'+
+      '<div><div class="d">'+esc(e.dept)+'</div><span class="st st-'+esc(e.status)+'" style="font-size:12px">'+esc(e.status)+'</span></div>'+
+      '<div><div class="sum">'+esc(e.summary)+'</div><div class="meta"><span class="actor '+esc(actor)+'">'+esc(actor)+'</span>'+
+      '<span class="badge '+(e.mode==="live"?"b-live":"b-mock")+'">'+esc(String(e.mode).toUpperCase())+'</span>'+
+      '<span>task <code>'+esc(e.task_id)+'</code></span>'+(out.kind?'<span class="chip kind'+(out.kind==="chain_stalled"?" stalled":"")+'">'+(out.kind==="chain_stalled"?"⚠ ":"")+esc(out.kind)+'</span>':'')+
+      (ch.length ? '<span>⤷ parent '+ch.map(function(c){return '<code>'+esc(c)+'</code>';}).join(' ← ')+'</span>' : '')+
+      brandChips(out)+
+      (act ? '<span class="act">⚙ action: '+esc(act.type||"")+(act.executed_by?' · by '+esc(act.executed_by):'')+'</span>' : '')+
+      '</div></div></div>';
+  });
+  $("feed").innerHTML = html;
+}
+$("feed").addEventListener("click", function(ev){
+  var el = ev.target.closest(".ev"); if(!el) return;
+  var e = events.slice(-50)[+el.getAttribute("data-i")]; if(!e) return;
+  openModal(e.dept+" · "+e.status+" · "+e.task_id, e);
+});
+function openModal(title, obj){
+  $("mTitle").textContent = title;
+  $("mBody").textContent = JSON.stringify(obj, null, 2);
+  var out = (obj && obj.output) || {}, links = [], act = out.action;
+  if(act){ var u = fileUrl(act.url) || fileUrl(act.path); if(u) links.push(u); }
+  collectFiles(out).forEach(function(u){ if(links.indexOf(u)<0) links.push(u); });
+  $("mLinks").innerHTML = links.length ? ('<b>Files:</b> ' + links.map(function(u){ return '<a href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(decodeURIComponent(u.split("/files/")[1]||u))+'</a>'; }).join("")) : (act ? '<span style="color:var(--mut)">action has no file path</span>' : '');
+  $("modal").classList.add("show");
+}
+$("mClose").onclick = function(){ $("modal").classList.remove("show"); };
+$("modal").addEventListener("click", function(e){ if(e.target.id==="modal") $("modal").classList.remove("show"); });
+document.addEventListener("keydown", function(e){ if(e.key==="Escape") $("modal").classList.remove("show"); });
+
+function previewOf(o){
+  o = o || {}; var parts = [], imgs = [];
+  if(o.engine) parts.push("engine: "+o.engine);
+  var od = o.outreach_draft || o.email_draft;
+  if(od && typeof od === "object"){ parts.push("✉ "+(od.to?("to: "+od.to+"\n"):"")+"subject: "+(od.subject||"")+"\n\n"+(od.body||"")); }
+  if(Array.isArray(o.shortlist)) parts.push("shortlist: "+o.shortlist.map(function(c){return (c.initials||c.name||c.candidate_id)+(c.score!=null?" ("+c.score+")":"");}).join(", "));
+  if(o.verdict) parts.push("QA verdict: "+o.verdict+(o.score!=null?" · score "+o.score:"")+(o.kind?" · kind "+o.kind:"")+(o.for_dept?" · for "+o.for_dept:""));
+  if(o.revision_note) parts.push("revision note: "+o.revision_note+(o.revision?" (rev "+o.revision+")":""));
+  ["subject","to","content","draft","outreach","email","body","caption","text","message","reply"].forEach(function(k){
+    var v = o[k]; if(v==null) return;
+    if(typeof v === "object") v = JSON.stringify(v, null, 1);
+    parts.push(k+": "+v);
+  });
+  collectFiles(o).forEach(function(u){ if(/\.(svg|png|jpe?g|gif|webp)(\?|$)/i.test(u)) imgs.push(u); });
+  var txt = parts.join("\n\n");
+  if(!txt && !imgs.length){ var j = JSON.stringify(o, null, 1); txt = j.length>600 ? j.slice(0,600)+" …" : j; }
+  var bc = brandChips(o);
+  return (bc ? '<div style="display:flex;gap:4px;flex-wrap:wrap">'+bc+'</div>' : '')+'<div class="pv">'+esc(txt)+(imgs.length?'<div>'+imgs.slice(0,4).map(function(u){return '<img src="'+esc(u)+'" alt="asset">';}).join("")+'</div>':'')+'</div>';
+}
+function reasonsOf(task){
+  var r = [];
+  events.forEach(function(e){ if(e.task_id===task && e.dept==="qa" && e.output){ var x = e.output.reasons || (e.output.qa && e.output.qa.reasons); if(x) r = [].concat(x); } });
+  return r;
+}
+function renderApprovals(pend){
+  $("apCount").textContent = pend.length;
+  var sig = pend.map(function(p){return p.task_id+p.since;}).join(",") + "|" + events.length;
+  if(sig === lastApSig) return; lastApSig = sig;
+  // keep any notes being typed
+  document.querySelectorAll("#aps textarea").forEach(function(t){ notes[t.getAttribute("data-t")] = t.value; });
+  var focused = document.activeElement && document.activeElement.tagName==="TEXTAREA" ? document.activeElement.getAttribute("data-t") : null;
+  if(!pend.length){ $("aps").innerHTML = '<div class="empty">Nothing waiting. The QA gate routes refunds, pricing, legal wording and first contact here.</div>'; return; }
+  $("aps").innerHTML = pend.map(function(p){
+    var rs = reasonsOf(p.task_id);
+    return '<div class="ap"><div class="h"><b>'+esc(p.dept)+'</b><span class="badge '+(p.mode==="live"?"b-live":"b-mock")+'">'+esc(String(p.mode).toUpperCase())+'</span><span class="chip">'+esc(p.task_id)+'</span><span class="chip">waiting '+esc(ago(p.since))+'</span></div>'+
+      '<div class="sum">'+esc(p.summary)+'</div>'+
+      (rs.length ? '<div class="rs">QA: '+rs.map(esc).join(" · ")+'</div>' : '')+
+      previewOf(p.output)+
+      '<textarea data-t="'+esc(p.task_id)+'" placeholder="Note to the department (optional)">'+esc(notes[p.task_id]||"")+'</textarea>'+
+      '<div class="btns"><button class="ok" data-a="approved" data-t="'+esc(p.task_id)+'">✓ Approve</button><button class="bad" data-a="rejected" data-t="'+esc(p.task_id)+'">✗ Reject</button>'+
+      '<button data-v="'+esc(p.task_id)+'">Details</button></div></div>';
+  }).join("");
+  window.__pend = pend;
+  if(focused){ var t = document.querySelector('#aps textarea[data-t="'+focused+'"]'); if(t){ t.focus(); t.selectionStart = t.selectionEnd = t.value.length; } }
+}
+$("aps").addEventListener("click", function(ev){
+  var b = ev.target.closest("button"); if(!b) return;
+  var v = b.getAttribute("data-v");
+  if(v){ var p = (window.__pend||[]).filter(function(x){return x.task_id===v;})[0]; if(p) openModal("Pending · "+p.task_id, p); return; }
+  var t = b.getAttribute("data-t"), a = b.getAttribute("data-a"); if(!t||!a) return;
+  var ta = document.querySelector('#aps textarea[data-t="'+t+'"]'); var note = ta ? ta.value : "";
+  b.parentNode.querySelectorAll("button").forEach(function(x){x.disabled=true;});
+  post("/api/approvals/"+encodeURIComponent(t), {decision:a, note:note}).then(function(){
+    msg("Founder "+a+" "+t+". The department acts on it next; watch the feed.");
+    delete notes[t]; lastApSig=""; tick();
+  }).catch(function(e){ msg("Could not record decision for "+t+": "+e.message, true); lastApSig=""; tick(); });
+});
+
+function renderKpis(k){
+  var tasks = 0, depts = {};
+  (k.tasks_by_dept_status||[]).forEach(function(r){ tasks += (r.tasks||r.n||r.count||0); depts[r.dept]=1; });
+  var avg = k.avg_time_to_done_sec && k.avg_time_to_done_sec.overall;
+  var items = [
+    [Object.keys(depts).length ? (k.tasks_by_dept_status||[]).length : 0, "dept × status rows"],
+    [(k.pending_founder_approvals||{}).count||0, "pending founder approvals"],
+    [avg==null ? "—" : (avg<120 ? Math.round(avg)+" s" : (avg/60).toFixed(1)+" min"), "avg time to done"],
+    [k.replies_sent_while_founder_away||0, "replies sent while founder away"]
+  ];
+  if(k.actions_executed!=null){ var a=k.actions_executed; items.push([typeof a==="object" ? ((a.auto||0)+" / "+(a.founder||0)) : a, "actions executed (auto / founder)"]); }
+  if(tasks) items[0] = [tasks, "tasks tracked"];
+  $("kpis").innerHTML = items.map(function(x){return '<div class="kpi"><div class="v">'+esc(x[0])+'</div><div class="l">'+esc(x[1])+'</div></div>';}).join("");
+  var rows = k.tasks_by_dept_status||[];
+  if(rows.length){
+    var cols = Object.keys(rows[0]);
+    $("kpiTable").innerHTML = '<table><tr>'+cols.map(function(c){return '<th>'+esc(c)+'</th>';}).join("")+'</tr>'+rows.map(function(r){return '<tr>'+cols.map(function(c){return '<td>'+esc(r[c])+'</td>';}).join("")+'</tr>';}).join("")+'</table>';
+  } else $("kpiTable").innerHTML = "";
+  setAway(!!k.founder_away);
+}
+
+function renderRules(r){
+  var list = Array.isArray(r) ? r : (r.rules || r.items || []);
+  if(!list.length){ $("rules").innerHTML = '<div class="empty">No rules reported.</div>'; return; }
+  var pick = function(o, ks){ for(var i=0;i<ks.length;i++){ if(o[ks[i]]!=null) return o[ks[i]]; } return ""; };
+  $("rules").innerHTML = '<table><tr><th>#</th><th>when</th><th>then</th></tr>'+list.map(function(x, i){
+    if(typeof x !== "object") return '<tr><td>'+(i+1)+'</td><td colspan="2">'+esc(x)+'</td></tr>';
+    var name = pick(x,["name","id","rule"]), when = pick(x,["when","trigger","pattern","match","on"]), then = pick(x,["then","action","handler","do","description"]);
+    var fmt = function(v){ return typeof v === "object" ? '<code>'+esc(JSON.stringify(v))+'</code>' : esc(v); };
+    return '<tr><td>'+(i+1)+(name?'<div style="color:var(--mut);font-size:11px">'+esc(name)+'</div>':'')+'</td><td>'+fmt(when)+'</td><td>'+fmt(then)+(x.description && then!==x.description ? '<div style="color:var(--mut)">'+esc(x.description)+'</div>':'')+'</td></tr>';
+  }).join("")+'</table>';
+}
+var rulesOk = false, rulesTries = 0;
+function loadRules(){
+  if(rulesOk || rulesTries > 40) return; rulesTries++;
+  get("/api/automation/rules").then(function(r){ rulesOk = true; renderRules(r); })
+    .catch(function(e){ $("rules").innerHTML = '<div class="empty">Automation engine not reporting rules yet ('+esc(e.status ? "HTTP "+e.status : "offline")+'). Retrying…</div>'; });
+}
+
+function setAway(on){
+  awayState = on; $("away").classList.toggle("on", on);
+  $("awayLbl").textContent = on ? "Founder AWAY (laptop closed)" : "Founder present";
+}
+$("away").onclick = function(){
+  var want = !awayState;
+  post("/api/founder/away", {away: want}).then(function(){ setAway(want); msg(want ? "Founder is away. Bots keep answering; only gated items wait in the queue." : "Founder is back."); tick(); })
+    .catch(function(e){ msg("Toggle failed: "+e.message, true); });
+};
+$("demo").onclick = function(){
+  var b = $("demo"); b.disabled = true;
+  post("/api/demo/seed", {}).then(function(r){ msg("Demo scenario started"+(r && r.started ? ": "+[].concat(r.started).join(", ") : "")+". Watch the feed."); })
+    .catch(function(e){ msg(e.status===404 ? "Demo seed isn't installed yet (POST /api/demo/seed returned 404). Run ./demo.sh on the box instead." : "Demo failed: "+e.message, e.status!==404); })
+    .then(function(){ setTimeout(function(){ b.disabled=false; }, 3000); tick(); });
+};
+
+function renderHealth(h){
+  health = h;
+  var live = h && h.xai_key;
+  $("bMock").className = "banner " + (live ? "live" : "mock");
+  var m = (h && h.modes) || {};
+  $("bMock").textContent = live
+    ? "LIVE AI available (XAI_API_KEY set). Per-dept modes: " + Object.keys(m).map(function(k){return k+"="+m[k];}).join(", ") + ". Each event still shows its own MOCK/LIVE badge."
+    : "MOCK mode: no XAI_API_KEY set. HR and Design output is placeholder (not AI generated); QA runs deterministic rules only; Data/Ops is live.";
+}
+
+var busy = false;
+function tick(){
+  if(busy) return; busy = true;
+  Promise.all([
+    get("/api/events?limit=400").then(function(r){ events = r.events || []; renderTiles(); renderFeed(); firstLoad = false; return true; }),
+    get("/api/approvals?pending=true").then(function(r){ renderApprovals(r.pending || []); }),
+    get("/api/ops/kpis").then(renderKpis),
+    get("/health").then(renderHealth)
+  ]).then(function(){ $("conn").className="conn"; $("conn").innerHTML = 'service: <b>live</b> · '+(sseOk ? 'push (SSE)' : 'polling 2 s')+' · '+esc(new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"}))+' CT'; })
+    .catch(function(e){ $("conn").className="conn down"; $("conn").innerHTML = 'service: <b>unreachable</b> ('+esc(e.message)+')'; })
+    .then(function(){ busy = false; });
+  loadRules();
+}
+// N01: SSE push (GET /api/stream) for instant updates; 2 s polling always keeps running as the fallback/consistency pass.
+var sse = null, sseOk = false, sseRetry = 0, pendT = null;
+function evKey(e){ return e.ts+"|"+e.task_id+"|"+e.status+"|"+e.dept; }
+function startSSE(){
+  if(!window.EventSource || sseRetry > 5) return;
+  try { sse = new EventSource(API + "/api/stream"); } catch(e){ return; }
+  sse.addEventListener("open", function(){ sseOk = true; sseRetry = 0; });
+  sse.addEventListener("event", function(m){
+    window.__sseCount = (window.__sseCount||0) + 1;
+    var e; try { e = JSON.parse(m.data); } catch(x){ return; }
+    if(!e || !e.task_id) return;
+    var k = evKey(e);
+    for(var i=events.length-1;i>=0 && i>=events.length-120;i--){ if(evKey(events[i])===k) return; }
+    events.push(e); if(events.length > 400) events = events.slice(-400);
+    renderTiles(); renderFeed();
+    clearTimeout(pendT); pendT = setTimeout(tick, 150); // refresh queue + KPIs right after a push
+  });
+  sse.addEventListener("error", function(){
+    sseOk = false;
+    if(sse && sse.readyState === 2){ sse = null; sseRetry++; setTimeout(startSSE, 3000); } // closed: polling covers it meanwhile
+  });
+}
+
+// QA reliability tile (W3 X08: GET /api/qa/reliability, POST /api/qa/reliability/run)
+var relT = 0, relPoll = null;
+function loadRel(){
+  get("/api/qa/reliability").then(function(r){
+    if(!r || r.total == null){ $("rel").innerHTML = '<div class="empty">'+(r && r.running ? "suite running…" : "suite has not run yet")+'</div>'; }
+    else {
+      var pct = Math.round((r.pass_rate||0)*1000)/10, col = pct >= 95 ? "var(--ok)" : (pct >= 80 ? "var(--warn)" : "var(--bad)");
+      var fails = (r.cases||[]).filter(function(c){ return !c.pass; });
+      $("rel").innerHTML = '<div class="kpis"><div class="kpi"><div class="v" style="color:'+col+'">'+esc(r.passed)+' / '+esc(r.total)+'</div><div class="l">golden cases passed ('+esc(pct)+'%)</div></div>'+
+        '<div class="kpi"><div class="v" style="font-size:18px">'+esc(fmtT(r.ran_at))+'</div><div class="l">last run · '+esc(r.duration_sec)+' s'+(r.running?' · re-running…':'')+'</div></div></div>'+
+        '<div style="font-size:12px;color:var(--mut);margin-top:6px">'+esc(r.runner||"")+' · '+esc(r.asserts||"")+'</div>'+
+        (fails.length ? '<div class="rs">Failing: '+fails.map(function(c){return esc(c.id+" "+(c.description||"")+(c.reason?" ("+c.reason+")":""));}).join(" · ")+'</div>' : '');
+    }
+    if(r && r.running){ if(!relPoll) relPoll = setInterval(loadRel, 3000); }
+    else if(relPoll){ clearInterval(relPoll); relPoll = null; $("relRun").disabled = false; }
+  }).catch(function(e){ $("rel").innerHTML = '<div class="empty">reliability endpoint not available ('+esc(e.status ? "HTTP "+e.status : "offline")+')</div>'; });
+}
+$("relRun").onclick = function(){
+  $("relRun").disabled = true;
+  post("/api/qa/reliability/run", {}).then(function(){ msg("QA golden suite started (~30 s)."); if(!relPoll) relPoll = setInterval(loadRel, 3000); loadRel(); })
+    .catch(function(e){ $("relRun").disabled = false; msg("Could not start suite: "+e.message, true); });
+};
+// Ask ops box (W3 X06: POST /api/ops/ask {question})
+$("askF").addEventListener("submit", function(ev){
+  ev.preventDefault(); var q = $("askQ").value.trim(); if(!q) return;
+  $("askA").innerHTML = '<div class="empty">asking…</div>';
+  post("/api/ops/ask", {question: q}).then(function(r){
+    var badge = r.mode === "live" ? '<span class="badge b-live">LIVE</span>' : '<span class="badge b-mock">MOCK</span>';
+    $("askA").innerHTML = '<div class="pv" style="white-space:normal"><div style="font-size:18px;font-weight:700">'+esc(r.answer || r.error || "no answer")+'</div>'+
+      '<div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+badge+(r.metric?'<span class="chip">metric: '+esc(r.metric)+'</span>':'')+'<span class="chip">'+esc(r.engine||"")+'</span></div>'+
+      (r.description?'<div style="color:var(--mut);margin-top:4px">'+esc(r.description)+'</div>':'')+
+      (r.sql?'<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--acc)">SQL that ran</summary><pre style="white-space:pre-wrap;margin:6px 0 0">'+esc(r.sql)+'</pre></details>':'')+'</div>';
+  }).catch(function(e){ $("askA").innerHTML = '<div class="empty">'+(e.status===404 ? "ops ask endpoint not installed yet" : "error: "+esc(e.message))+'</div>'; });
+});
+// ---------- v2: mission-control node graph (hand-written SVG, no libs) ----------
+var SVGNS = "http://www.w3.org/2000/svg";
+var G = {nodes:{}, edges:{}, pulses:[], done:{}, lastDept:{}, deptOfTask:{}, primed:false, queueAt:0, demoRunning:false};
+var HERO = {trend_spotted:1, product_created:1, listing_live:1, order_placed:1, margin_update:1, chain_stalled:1};
+G.stalled = {}; G.heroLast = null;
+var CX = 440, CY = 280, RX = 335, RY = 228;
+function svgEl(tag, attrs, parent){ var el = document.createElementNS(SVGNS, tag); for(var k in attrs) el.setAttribute(k, attrs[k]); if(parent) parent.appendChild(el); return el; }
+function shortName(d){ var s = d.name.split(/[\/&]/)[0].trim(); return s.length > 13 ? s.slice(0,12)+"…" : s; }
+function nodeIdFor(dept){
+  if(!dept) return null;
+  if(dept === "founder") return "founder";
+  if(SYSTEM[dept]) return null;
+  var s = deptSlot(dept); return s ? "d"+s.n : null;
+}
+function buildGraph(){
+  var gN = $("gNodes"); gN.innerHTML = "";
+  DEPTS.forEach(function(d, i){
+    var a = -Math.PI/2 + i*2*Math.PI/DEPTS.length;
+    var x = CX + RX*Math.cos(a), y = CY + RY*Math.sin(a);
+    var g = svgEl("g", {"class":"node", transform:"translate("+x.toFixed(1)+","+y.toFixed(1)+")"}, gN);
+    svgEl("circle", {"class":"ring", r:36}, g);
+    svgEl("circle", {"class":"core", r:32}, g);
+    var tn = svgEl("text", {"class":"num", y:6}, g); tn.textContent = d.n;
+    var tl = svgEl("text", {y:56}, g); var ts = svgEl("text", {"class":"sub", y:72}, g);
+    var ttl = svgEl("title", {}, g);
+    G.nodes["d"+d.n] = {x:x, y:y, g:g, label:tl, sub:ts, title:ttl, dept:d};
+  });
+  [["founder","FOUNDER","approves risky actions",CX,CY,"hub",46],["publish","PUBLISH","outbox · published/",925,CY,"pub",38]].forEach(function(s){
+    var g = svgEl("g", {"class":"node "+s[5], transform:"translate("+s[3]+","+s[4]+")"}, gN);
+    svgEl("circle", {"class":"ring", r:s[6]+4}, g); svgEl("circle", {"class":"core", r:s[6]}, g);
+    var t = svgEl("text", {y:5, style:"font-size:"+(s[0]==="founder"?17:14)+"px;letter-spacing:.08em"}, g); t.textContent = s[1];
+    var sub = svgEl("text", {"class":"sub", y:s[6]+20}, g); sub.textContent = s[2];
+    G.nodes[s[0]] = {x:s[3], y:s[4], g:g, label:t, sub:sub};
+  });
+  // the known automation chains, drawn faintly so the audience sees the routes before pulses run
+  [["d10","d13"],["d13","founder"],["d4","d11"],["d3","d11"],["d5","d11"],["d11","d13"],["d13","publish"],["d6","d10"],["founder","publish"],["d2","d8"],["d2","d11"],["d8","d13"],["d13","d6"],["d13","d4"],["d6","d3"],["d4","d3"],["d3","d12"],["d12","d7"]].forEach(function(p){ edge(p[0], p[1]); });
+  updateNodes();
+}
+function edge(a, b){
+  var k = a < b ? a+"|"+b : b+"|"+a;
+  if(G.edges[k]) return G.edges[k];
+  var A = G.nodes[a], B = G.nodes[b]; if(!A || !B) return null;
+  // gentle curve bending toward the centre
+  var mx = (A.x+B.x)/2, my = (A.y+B.y)/2, dx = B.x-A.x, dy = B.y-A.y, len = Math.sqrt(dx*dx+dy*dy)||1;
+  var bend = Math.min(60, len*0.18), nx = -dy/len, ny = dx/len;
+  if((mx+nx*bend-CX)*(mx+nx*bend-CX)+(my+ny*bend-CY)*(my+ny*bend-CY) > (mx-CX)*(mx-CX)+(my-CY)*(my-CY)){ nx=-nx; ny=-ny; }
+  var p = svgEl("path", {"class":"edge", d:"M"+A.x+","+A.y+" Q"+(mx+nx*bend)+","+(my+ny*bend)+" "+B.x+","+B.y}, $("gEdges"));
+  return (G.edges[k] = {path:p, from:a, hot:0});
+}
+function pulse(a, b, label, color){
+  var e = edge(a, b); if(!e) return;
+  var now = performance.now(), start = Math.max(now, G.queueAt);
+  G.queueAt = start + 380; // stagger batches so chains read left-to-right in time
+  var col = color || "#38e8ff";
+  var grp = svgEl("g", {opacity:0}, $("gPulses"));
+  var dots = [0,1,2,3].map(function(i){ return svgEl("circle", {r: i===0 ? 9 : 7-i*1.5, fill: i===0 ? "url(#pg)" : col, opacity: i===0 ? 1 : 0.55-i*0.12, filter: i===0 ? "url(#gl)" : ""}, grp); });
+  G.pulses.push({e:e, rev:e.from!==a, start:start, dur:1250, grp:grp, dots:dots, to:b, label:label});
+}
+function animate(now){
+  var len, i, p, t;
+  for(i = G.pulses.length-1; i >= 0; i--){
+    p = G.pulses[i];
+    if(now < p.start) continue;
+    t = (now - p.start) / p.dur;
+    if(t >= 1){
+      p.grp.remove(); G.pulses.splice(i,1);
+      var n = G.nodes[p.to]; if(n){ n.g.classList.add("flash"); (function(g){ setTimeout(function(){ g.classList.remove("flash"); }, 450); })(n.g); }
+      continue;
+    }
+    if(!p.shown){ p.shown = 1; p.grp.setAttribute("opacity", 1); p.e.path.classList.add("hot"); p.e.hot = now + p.dur + 600; if(p.label) flowLog(p.label); }
+    len = p.e.path.getTotalLength();
+    var ease = t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+    p.dots.forEach(function(d, j){
+      var tt = Math.max(0, ease - j*0.035); if(p.rev) tt = 1-tt;
+      var pt = p.e.path.getPointAtLength(tt*len); d.setAttribute("cx", pt.x); d.setAttribute("cy", pt.y);
+    });
+  }
+  for(var k in G.edges){ var e = G.edges[k]; if(e.hot && now > e.hot){ e.hot = 0; e.path.classList.remove("hot"); } }
+  requestAnimationFrame(animate);
+}
+var flowLines = [];
+function flowLog(s){ flowLines.unshift(s); flowLines = flowLines.slice(0,3); $("flowLog").innerHTML = flowLines.map(function(x,i){ return i===0 ? '<b>⟶ '+esc(x)+'</b>' : esc(x); }).join(" &nbsp;·&nbsp; "); }
+function nm(id){ var n = G.nodes[id]; return n ? (n.dept ? n.dept.name.split(/[\/&]/)[0].trim() : n.label.textContent) : id; }
+// Flow derivation from real events (no invented data):
+//  1. first event of a task with parent_id whose parent task lives in another dept -> parentDept -> dept
+//  2. same task_id appearing in a new dept (e.g. hr -> qa verdict) -> previousDept -> dept
+//  3. status needs_approval -> dept -> Founder;  actor founder + approved/rejected -> Founder -> dept
+//  4. status done with output.action (except task_created) -> dept -> Publish (outbox / published files)
+function processEvents(){
+  var fresh = [];
+  events.forEach(function(e){ var k = evKey(e); if(!G.done[k]){ G.done[k] = 1; fresh.push(e); } });
+  fresh.forEach(function(e){
+    var to = nodeIdFor(e.dept), anim = G.primed, out = e.output || {}, act = out.action;
+    var firstOfTask = !(e.task_id in G.lastDept);
+    if(firstOfTask && e.parent_id && G.deptOfTask[e.parent_id]){
+      var from = nodeIdFor(G.deptOfTask[e.parent_id]);
+      if(anim && from && to && from !== to) pulse(from, to, nm(from)+" → "+nm(to)+" · "+(e.summary||e.task_id));
+    } else if(!firstOfTask && G.lastDept[e.task_id] !== e.dept){
+      var f2 = nodeIdFor(G.lastDept[e.task_id]);
+      if(anim && f2 && to && f2 !== to) pulse(f2, to, nm(f2)+" → "+nm(to)+" · "+(e.summary||e.task_id));
+    }
+    if(anim && to && to !== "founder"){
+      if(e.status === "needs_approval") pulse(to, "founder", nm(to)+" → Founder · awaiting approval", "#c77dff");
+      if(e.actor === "founder" && (e.status === "approved" || e.status === "rejected")) pulse("founder", to, "Founder "+e.status+" · "+nm(to), e.status === "approved" ? "#3dffa8" : "#ffc04d");
+      if(e.status === "done" && act && act.type && act.type !== "task_created") pulse(to, "publish", nm(to)+" → "+act.type+(e.mode==="mock"?" (MOCK)":""), "#3dffa8");
+    }
+    var kind = out.kind;
+    if(HERO[kind] && to){
+      if(anim && G.heroLast && G.heroLast !== to) pulse(G.heroLast, to, "Pulse Studio · "+kind+" · "+nm(to)+(e.mode==="mock"?" (MOCK)":""), "#ff7ad9");
+      if(kind === "chain_stalled"){ G.stalled[to] = e.ts; if(anim) flowLog("⚠ chain stalled at "+nm(to)+" · "+(e.summary||"")); }
+      else { delete G.stalled[to]; G.heroLast = to; }
+    }
+    if(!G.deptOfTask[e.task_id]) G.deptOfTask[e.task_id] = e.dept;
+    G.lastDept[e.task_id] = e.dept;
+  });
+  G.primed = true;
+  if(fresh.length) updateNodes();
+}
+function updateNodes(){
+  var last = {}, modes = {};
+  events.forEach(function(e){ var id = nodeIdFor(e.dept); if(!id || id==="founder") return; last[id] = e; (modes[id] = modes[id] || {})[e.mode] = 1; });
+  DEPTS.forEach(function(d){
+    var n = G.nodes["d"+d.n]; if(!n) return;
+    var e = last["d"+d.n], cls = "node";
+    if(!d.key) cls += " off"; else if(!e) cls += " idle"; else cls += " s-"+e.status;
+    if(G.stalled["d"+d.n]) cls += " stalled";
+    n.g.setAttribute("class", cls);
+    n.label.textContent = shortName(d);
+    var m = modes["d"+d.n] || {};
+    n.sub.textContent = !d.key ? "dev3 · not connected" : (G.stalled["d"+d.n] ? "⚠ STALLED" : e ? e.status.replace("_"," ")+(m.mock ? " · MOCK" : "") : "no events");
+    n.sub.style.fill = m.mock ? "#ffd88a" : "";
+    n.title.textContent = d.n+". "+d.name+" ("+d.owner+")"+(e ? "\n"+e.status+": "+e.summary : "");
+  });
+  var pc = +$("apCount").textContent || 0, f = G.nodes.founder;
+  if(f){ f.g.setAttribute("class", "node hub"+(pc ? " s-needs_approval" : "")); f.sub.textContent = pc ? pc+" waiting for you" : (awayState ? "AWAY · queue holds" : "approves risky actions"); }
+}
+function loadDemo(){
+  get("/api/demo/status").then(function(s){
+    G.demoRunning = !!(s && s.running);
+    var steps = (s && s.steps) || [];
+    $("demoSt").textContent = s && (s.running || s.run_id) ? ("demo "+(s.running ? "running" : "finished")+(s.run_id ? " · "+s.run_id : "")+" · "+steps.length+" steps") : "";
+  }).catch(function(e){ $("demoSt").textContent = "demo status unavailable ("+(e.status ? "HTTP "+e.status : "offline")+")"; });
+}
+buildGraph(); requestAnimationFrame(animate);
+setInterval(function(){ processEvents(); updateNodes(); }, 250);
+loadDemo(); setInterval(loadDemo, 2000);
+loadRel(); setInterval(loadRel, 15000);
+renderTiles(); renderFeed(); tick(); setInterval(tick, 2000); startSSE();
+})();
+</script>
+</body>
+</html>

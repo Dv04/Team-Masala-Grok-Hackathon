@@ -70,3 +70,22 @@ metrics:
     keywords: [mock, live, mode, real, fake, honest]
     sql: |
       SELECT mode, count(*) AS events FROM events GROUP BY mode ORDER BY mode
+  orders_count:
+    description: Pulse Studio orders placed (MOCK print-on-demand, Stripe test mode), from order_placed events
+    keywords: [orders, order, sold, sales, bought, purchases, pulse]
+    sql: |
+      SELECT count(*) AS orders_count, coalesce(sum(CAST(json_extract(output,'$.qty') AS INTEGER)),0) AS units
+      FROM events WHERE json_extract_string(output,'$.kind') = 'order_placed'
+  revenue_usd:
+    description: Pulse Studio revenue in USD (test mode, MOCK orders), from order_placed events
+    keywords: [revenue, money, earned, income, gross, dollars, usd]
+    sql: |
+      SELECT round(coalesce(sum(CAST(json_extract(output,'$.revenue_usd') AS DOUBLE)),0),2) AS revenue_usd
+      FROM events WHERE json_extract_string(output,'$.kind') = 'order_placed'
+  margin_pct:
+    description: Pulse Studio gross margin percent over all orders (computed by ops; dev3 finance has its own)
+    keywords: [margin, profit, profitability, gross, cost, costs]
+    sql: |
+      SELECT round(100 * (sum(CAST(json_extract(output,'$.revenue_usd') AS DOUBLE)) - sum(CAST(json_extract(output,'$.cost_usd') AS DOUBLE)))
+             / nullif(sum(CAST(json_extract(output,'$.revenue_usd') AS DOUBLE)),0), 1) AS margin_pct
+      FROM events WHERE json_extract_string(output,'$.kind') = 'order_placed'
