@@ -179,14 +179,16 @@ class TaskPickup(unittest.TestCase):
         mine = [x for x in out if x[0][1] == "finance-1"]
         self.assertEqual([x[0][2] for x in mine], ["running", "done"])
         self.assertTrue(all(x[1]["parent_id"] == "req-1" for x in mine))
-        rep = mine[1][0][4]
+        r = [x for x in out if x[0][1] == "fin-finance-1"]
+        self.assertEqual(r[0][1]["parent_id"], "finance-1")   # reply is its own task, linked to the incoming task
+        rep = r[0][0][4]
         self.assertEqual((rep["kind"], rep["orders_priced"], rep["revenue"], rep["margin"]), ("finance_report", 1, 12.0, 8.15))
 
     def test_legal_task_flag_goes_to_founder_and_qa(self):
         a, out = self._run([task("legal-1", "legal", "Review launch copy", "New Nike x Pulse tee drop")])
         mine = [x for x in out if x[0][1] == "legal-1" and x[0][0] == "legal"]
         self.assertEqual([x[0][2] for x in mine], ["running", "needs_approval"])
-        self.assertEqual(mine[1][0][4]["verdict"], "flag")
+        self.assertEqual([x for x in out if x[0][1] == "legal-legal-1"][0][0][4]["verdict"], "flag")
         self.assertTrue(any(x[0][0] == "QA" for x in out))
 
     def test_task_addressed_by_for_dept(self):
@@ -194,8 +196,9 @@ class TaskPickup(unittest.TestCase):
         a, out = self._run([t])
         mine = [x for x in out if x[0][1] == "legal-9"]
         self.assertEqual([(x[0][0], x[0][2], x[1]["parent_id"]) for x in mine], [("legal", "running", "req-1"), ("legal", "done", "req-1")])
-        self.assertEqual(mine[1][0][4]["kind"], "legal_precheck")
-        self.assertEqual(mine[1][1]["mode"], "mock")   # no real Grok call -> mock
+        r = [x for x in out if x[0][1] == "legal-legal-9"]
+        self.assertEqual((r[0][0][2], r[0][1]["parent_id"], r[0][0][4]["kind"]), ("done", "legal-9", "legal_precheck"))
+        self.assertEqual(r[0][1]["mode"], "mock")   # no real Grok call -> mock
 
     def test_legal_task_pass_is_done(self):
         a, out = self._run([task("legal-2", "legal", "Check terms of sale", "Printed on demand, ships in 5 days")])
@@ -206,7 +209,8 @@ class TaskPickup(unittest.TestCase):
                             task("integrations-1", "integrations", "Webhook connector status")])
         mine = [x for x in out if x[0][1] == "integrations-1"]
         self.assertEqual([x[0][2] for x in mine], ["running", "done"])
-        self.assertEqual(mine[1][0][4]["kind"], "integration_status")
+        r = [x for x in out if x[0][1] == "int-integrations-1"]
+        self.assertEqual((r[0][0][2], r[0][1]["parent_id"], r[0][0][4]["kind"]), ("done", "integrations-1", "integration_status"))
 
     def test_claimed_or_other_dept_tasks_are_skipped_and_once_only(self):
         t = task("finance-2", "finance", "Revenue")

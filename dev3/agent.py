@@ -367,8 +367,16 @@ class Agent:
 
 
 def _handle_task(self, e, events, t=None):
-    """Claim a routed task (running), do the dept's work, then done / needs_approval / failed on the same task_id."""
+    """Claim a routed task (running), do the dept's work, then post the reply as a NEW task (parent_id = incoming task id)
+    and close the incoming task with the same status, so the hub/dashboard can link reply -> task -> request."""
     dept, tid, parent = task_dept(e), e["task_id"], e.get("parent_id")
+    rid = f"{ {'finance': 'fin', 'legal': 'legal', 'integrations': 'int'}.get(dept, dept)}-{tid}"
+    raw_emit = self.emit
+
+    def reply(d, _tid, status, summ, out=None, parent_id=None, **kw):
+        raw_emit(d, rid, status, summ, out, parent_id=tid, **kw)
+        raw_emit(d, tid, status, summ, {"kind": "task_closed", "reply_task_id": rid}, parent_id=parent,
+                 **{k: v for k, v in kw.items() if k == "mode"})
     title, detail = task_text(e)
     self.emit(dept, tid, "running", f"{dept} picked up task: {title}"[:200],
               {"kind": "task_claimed", "title": title, "owner": "dev3"}, parent_id=parent)
@@ -383,9 +391,9 @@ def _handle_task(self, e, events, t=None):
             summ = (f"Finance: {out['orders_priced']} priced orders, ${out['revenue']} revenue, margin ${out['margin']} "
                     f"({out['margin_frac']:.0%})" if out["orders_priced"] else "Finance: no priced orders on the log yet")
             status = "needs_approval" if out["under_floor"] else "done"
-            self.emit(dept, tid, status, summ, out, parent_id=parent, needs_approval=status == "needs_approval", mode=mode)
+            reply(dept, tid, status, summ, out, parent_id=parent, needs_approval=status == "needs_approval", mode=mode)
             if status == "needs_approval" and qa_bridge:
-                qa_bridge.margin_check(tid, out, hub=HUB, mode=mode)
+                qa_bridge.margin_check(rid, out, hub=HUB, mode=mode)
         elif dept == "legal":
             ev = {"task_id": tid, "summary": title, "output": {"kind": "task", "title": title, "text": detail}}
             out = legal_review(ev)
@@ -397,21 +405,21 @@ def _handle_task(self, e, events, t=None):
                     out["verdict"] = "flag"; out["issues"].append("grok: " + str(op.get("opinion", ""))[:160])
             out["task"] = title
             if out["verdict"] == "flag":
-                self.emit(dept, tid, "needs_approval", "Legal review flag: " + "; ".join(out["issues"])[:170], out,
+                reply(dept, tid, "needs_approval", "Legal review flag: " + "; ".join(out["issues"])[:170], out,
                           parent_id=parent, needs_approval=True, mode=mode)
-                self.qa(tid, out, mode=mode)
+                self.qa(rid, out, mode=mode)
             else:
-                self.emit(dept, tid, "done", f"Legal review pass: {title}"[:200], out, parent_id=parent, mode=mode)
+                reply(dept, tid, "done", f"Legal review pass: {title}"[:200], out, parent_id=parent, mode=mode)
         else:  # integrations
             cm = connection_map(events, t)
             chains = chain_state(events)
             off = [d for d, v in cm.items() if not v["connected"]]
             out = {"kind": "integration_status", "task": title, "depts": cm, "connected": 13 - len(off), "waiting_on": off,
                    "chains": {r: {"hops": c["hops"], "next": c["next"]} for r, c in list(chains.items())[-10:]}}
-            self.emit(dept, tid, "done", f"Integrations: {13 - len(off)}/13 depts connected, {len(chains)} Pulse chains tracked",
+            reply(dept, tid, "done", f"Integrations: {13 - len(off)}/13 depts connected, {len(chains)} Pulse chains tracked",
                       out, parent_id=parent)
     except Exception as ex:
-        self.emit(dept, tid, "failed", f"{dept} task failed: {type(ex).__name__}"[:200],
+        reply(dept, tid, "failed", f"{dept} task failed: {type(ex).__name__}"[:200],
                   {"kind": "task_failed", "error": f"{type(ex).__name__}: {ex}"[:300]}, parent_id=parent)
 
 
