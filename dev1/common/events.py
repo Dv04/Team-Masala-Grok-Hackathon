@@ -106,3 +106,13 @@ class EventsClient:
         if status_code >= 400:
             raise EventError(f"GET /api/events failed ({status_code})", status_code)
         return parsed
+
+    def get_tasks(self, *, dept: str, status: str | None = None, timeout: float = 15) -> list:
+        """GET /api/tasks?dept=&status= (task inbox, status overlaid from the event log)."""
+        params = {k: v for k, v in {"dept": dept, "status": status}.items() if v}
+        url = self.settings.departments_base_url + "/api/tasks?" + str(httpx.QueryParams(params))
+        status_code, parsed = _http_json("GET", url, None, timeout)
+        if status_code >= 400:
+            raise EventError(f"GET /api/tasks failed ({status_code})", status_code)
+        rows = parsed.get("tasks") if isinstance(parsed, dict) else None
+        return rows if isinstance(rows, list) else []

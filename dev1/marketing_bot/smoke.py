@@ -2,7 +2,7 @@
 """Smoke against a locally running departments service (departments/start.sh, port 8810).
 
 Posts one listing_live event and waits until marketing has emitted running, then a
-sandbox draft (done or needs_approval) with needs_qa true. Prints the events it saw.
+sandbox draft (done or needs_approval) with needs_qa false (QA already ran). Prints the events it saw.
 """
 import json
 import os
@@ -86,7 +86,7 @@ def main():
     running = [e for e in seen if e["status"] == "running"]
     final = [e for e in seen if (e.get("output") or {}).get("drafts")][-1]
     ok_running = bool(running)
-    ok_qa = final["output"].get("needs_qa") is True and final["output"].get("posted") is False
+    ok_qa = final["output"].get("needs_qa") is False and final["output"].get("posted") is False
     ok_status = final["status"] in ("done", "needs_approval", "failed")
     ok_dept = final["dept"] == "marketing"
     print("running_events", len(running), "final_status", final["status"], "mode", final["mode"])

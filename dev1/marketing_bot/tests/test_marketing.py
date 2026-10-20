@@ -17,7 +17,7 @@ def listing(task="sale-1", **product):
             "price": 12, "cost": 3, "trend": "orbit cats"}
     body.update(product)
     return {
-        "dept": "sales", "task_id": task, "status": "done", "actor": "dev2-bot",
+        "dept": "design", "task_id": task, "status": "done", "actor": "dev2-bot",
         "summary": "listing live", "mode": "mock",
         "output": {
             "kind": "listing_live",
@@ -99,7 +99,7 @@ class MarketingTests(unittest.TestCase):
         self.assertEqual(final["dept"], "marketing")
         self.assertEqual(final["actor"], "dev1-marketing")
         self.assertEqual(final["status"], "done")
-        self.assertTrue(final["output"]["needs_qa"])
+        self.assertFalse(final["output"]["needs_qa"])
         self.assertEqual(final["output"]["kind"], "public_post")
         self.assertFalse(final["output"]["posted"])
         self.assertEqual(final["mode"], "mock")
@@ -142,7 +142,7 @@ class MarketingTests(unittest.TestCase):
         final = fake.events[-1]
         self.assertEqual(final["status"], "needs_approval")
         self.assertTrue(final["needs_approval"])
-        self.assertTrue(final["output"]["needs_qa"])
+        self.assertFalse(final["output"]["needs_qa"])
 
     def test_ignores_unrelated_and_is_idempotent(self):
         fake = FakeEvents()
@@ -174,6 +174,46 @@ class MarketingTests(unittest.TestCase):
         bot.handle_event(ev)
         kinds = [e["output"].get("kind") for e in fake.events]
         self.assertNotIn("design_request", kinds)
+
+    def test_design_listing_image_counts_as_asset(self):
+        fake = FakeEvents()
+        bot = self._bot(fake)
+        ev = listing("product-1")
+        ev["dept"] = "design"
+        ev["output"]["image_url"] = "/files/published/product-1/a.svg"
+        bot.handle_event(ev)
+        kinds = [e["output"].get("kind") for e in fake.events]
+        self.assertNotIn("design_request", kinds)
+
+    def test_echoed_listing_launches_once_per_product(self):
+        fake = FakeEvents()
+        bot = self._bot(fake)
+        design = listing("product-2")
+        design["dept"] = "design"
+        echo = {"dept": "engineering", "task_id": "englist_x", "status": "done", "actor": "engineering-bot",
+                "summary": "Engineering recorded the live listing", "mode": "live",
+                "output": {"kind": "listing_live", "url": "/x", "price": 6, "listing_task": "product-2"}}
+        self.assertIsNotNone(bot.handle_event(design))
+        self.assertIsNone(bot.handle_event(echo))
+        self.assertEqual(len(fake.qa_calls), 1)
+        self.assertTrue(all(e["task_id"].startswith("mkt-product-2") for e in fake.events))
+
+    def test_listing_live_launches_only_from_design(self):
+        fake = FakeEvents()
+        bot = self._bot(fake)
+        sales = listing("sale-echo")
+        sales["dept"] = "sales"
+        engineering = listing("eng-echo")
+        engineering["dept"] = "engineering"
+        self.assertIsNone(bot.handle_event(sales))
+        self.assertIsNone(bot.handle_event(engineering))
+        self.assertEqual(fake.events, [])
+        design = listing("product-9")
+        design["dept"] = "design"
+        self.assertIsNotNone(bot.handle_event(design))
+        self.assertEqual(len(fake.qa_calls), 1)
+        self.assertIsNone(bot.handle_event(design))
+        self.assertEqual(len(fake.qa_calls), 1)
 
     def test_trend_spotted_is_passed_to_the_drafter(self):
         fake = FakeEvents()

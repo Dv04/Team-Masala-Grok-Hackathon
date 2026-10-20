@@ -73,6 +73,34 @@ def _recent_research(events: EventsClient):
     return rows if isinstance(rows, list) else []
 
 
+def open_research_task(events: EventsClient):
+    """Oldest queued research task routed by the orchestrator for a Pulse kickoff, or None."""
+    getter = getattr(events, "get_tasks", None)
+    if getter is None:
+        return None
+    try:
+        tasks = getter(dept="research", status="queued")
+    except (EventError, OSError):
+        return None
+    for t in tasks or []:
+        detail = t.get("detail") if isinstance(t, dict) else None
+        if isinstance(detail, dict) and detail.get("expect") == "trend_spotted":
+            return t
+    return None
+
+
+def _trend_of(events: EventsClient, trend_task: str):
+    try:
+        rows = (events.get_events(task_id=trend_task, limit=20) or {}).get("events") or []
+    except (EventError, OSError):
+        rows = []
+    for ev in rows:
+        out = ev.get("output") or {}
+        if out.get("kind") == "trend_spotted":
+            return out
+    return {}
+
+
 def load_backup() -> tuple[str, str]:
     data = json.loads(FIXTURE.read_text(encoding="utf-8"))
     trend = str(data.get("trend") or "").strip()
@@ -123,6 +151,31 @@ def spot(
     settings = settings or load_settings()
     grok = grok or GrokClient(settings)
     events = events or EventsClient(settings)
+    task = None if force else open_research_task(events)
+    if task and (task.get("detail") or {}).get("trend_task"):
+        # The orchestrator's /api/pulse/start already started a chain. Accept that trend on the
+        # routed task (closes it) instead of starting a second chain with another trend.
+        trend_task = task["detail"]["trend_task"]
+        prior = _trend_of(events, trend_task)
+        trend = redact(str(prior.get("trend") or ""))[:180]
+        accepted = events.post_event(
+            dept="research",
+            task_id=task["task_id"],
+            status="done",
+            summary=f"Research: trend accepted '{trend}' (from pulse kickoff {trend_task})"[:200],
+            mode="mock",
+            actor="dev1-trend",
+            output={"kind": "trend_accepted", "trend": trend, "source": prior.get("source") or "backup",
+                    "trend_task": trend_task},
+            parent_id=task.get("parent_id") or None,
+        )
+        return {
+            "skipped": True,
+            "claimed": task["task_id"],
+            "task_id": trend_task,
+            "accepted": accepted,
+            "message": f"accepted pulse trend {trend!r} ({trend_task}) on research task {task['task_id']}; no new trend posted",
+        }
     trend = why = None
     mode = "mock"
     fallback = True
@@ -168,7 +221,8 @@ def spot(
                 "output": output,
                 "message": message,
             }
-    task_id = "trend-" + uuid.uuid4().hex[:8]
+    # A routed research task without a pulse kickoff: post on that task so it closes.
+    task_id = task["task_id"] if task else "trend-" + uuid.uuid4().hex[:8]
     posted = events.post_event(
         dept="research",
         task_id=task_id,
@@ -177,6 +231,7 @@ def spot(
         mode=mode,
         actor="dev1-trend",
         output=output,
+        parent_id=(task or {}).get("parent_id") or None,
     )
     # Same shape as departments/lib/standins.py research stand-in, without the
     # [STAND-IN] label or standin flags. Same task_id so the stand-in sees a real
