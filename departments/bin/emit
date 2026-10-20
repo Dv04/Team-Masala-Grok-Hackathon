@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Append one schema-valid event via the dev4 service (POST /api/events), which is the only writer of
+data/events.jsonl. Use --local only if the service is down (writes the file directly with a lock).
+Usage:
+  bin/emit --dept support --task t-1 --status done --summary "Replied to #42" --mode mock [--output '{"kind":"customer_reply"}'] [--parent req-7] [--actor dev2-bot] [--needs-approval]
+  echo '{...event json...}' | bin/emit -
+"""
+import argparse, json, os, sys, urllib.request, urllib.error
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import events
+API = os.environ.get("DEPT_API", "http://127.0.0.1:8810")
+p = argparse.ArgumentParser()
+p.add_argument("stdin", nargs="?"); p.add_argument("--dept"); p.add_argument("--task"); p.add_argument("--status")
+p.add_argument("--summary"); p.add_argument("--mode", choices=["live", "mock"]); p.add_argument("--output", default="{}")
+p.add_argument("--parent"); p.add_argument("--actor"); p.add_argument("--needs-approval", action="store_true", default=None)
+p.add_argument("--local", action="store_true")
+a = p.parse_args()
+try:
+    if a.stdin == "-": ev = json.load(sys.stdin)
+    else:
+        ev = {"dept": a.dept, "task_id": a.task or events.new_task_id(), "status": a.status, "summary": a.summary,
+              "mode": a.mode, "output": json.loads(a.output)}
+        if a.parent: ev["parent_id"] = a.parent
+        if a.actor: ev["actor"] = a.actor
+        if a.needs_approval is not None: ev["needs_approval"] = True
+    if a.local:
+        print(json.dumps({"ok": True, "event": events.append(ev), "via": "local-file"})); sys.exit(0)
+    req = urllib.request.Request(API + "/api/events", json.dumps(ev).encode(), {"Content-Type": "application/json"})
+    try:
+        print(urllib.request.urlopen(req, timeout=10).read().decode())
+    except urllib.error.HTTPError as e:
+        print(e.read().decode()); sys.exit(2)
+except (ValueError, json.JSONDecodeError) as e:
+    print(json.dumps({"ok": False, "error": str(e)})); sys.exit(2)

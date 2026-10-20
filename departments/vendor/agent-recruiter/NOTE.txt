@@ -1,0 +1,1 @@
+Only LICENSE kept; blind-mask + interview-plan pattern reimplemented in lib/hr_extras.py (no code copied).
